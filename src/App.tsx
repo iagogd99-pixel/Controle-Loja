@@ -11,7 +11,6 @@ import { ProtectedRoute } from '@/src/components/ProtectedRoute';
 import { Layout } from '@/src/components/Layout';
 
 // Mock Pages (will be replaced in next steps)
-const Login = React.lazy(() => import('@/src/pages/Login'));
 const Dashboard = React.lazy(() => import('@/src/pages/Dashboard'));
 const Products = React.lazy(() => import('@/src/pages/Products'));
 const ProductForm = React.lazy(() => import('@/src/pages/ProductForm'));
@@ -21,7 +20,6 @@ const Finances = React.lazy(() => import('@/src/pages/Finances'));
 const Reports = React.lazy(() => import('@/src/pages/Reports'));
 const Clients = React.lazy(() => import('@/src/pages/Clients'));
 const Suppliers = React.lazy(() => import('@/src/pages/Suppliers'));
-const Users = React.lazy(() => import('@/src/pages/Users'));
 const Settings = React.lazy(() => import('@/src/pages/Settings'));
 const Categories = React.lazy(() => import('@/src/pages/Categories'));
 const Purchases = React.lazy(() => import('@/src/pages/Purchases'));
@@ -38,8 +36,6 @@ export default function App() {
           </div>
         }>
           <Routes>
-            <Route path="/login" element={<Login />} />
-            
             <Route path="/" element={
               <ProtectedRoute>
                 <Layout><Dashboard /></Layout>
@@ -97,12 +93,6 @@ export default function App() {
             <Route path="/fornecedores" element={
               <ProtectedRoute>
                 <Layout><Suppliers /></Layout>
-              </ProtectedRoute>
-            } />
-
-            <Route path="/usuarios" element={
-              <ProtectedRoute adminOnly>
-                <Layout><Users /></Layout>
               </ProtectedRoute>
             } />
 
