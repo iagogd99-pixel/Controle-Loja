@@ -43,6 +43,15 @@ export default function SalesPending() {
   const [selectedSale, setSelectedSale] = useState<Sale | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
+  const [showFilters, setShowFilters] = useState(false);
+  const [filters, setFilters] = useState({
+    customer: '',
+    startDate: '',
+    endDate: '',
+    minValue: '',
+    maxValue: '',
+    productName: ''
+  });
 
   useEffect(() => {
     const q = query(
@@ -226,10 +235,46 @@ export default function SalesPending() {
     }
   };
 
-  const filteredSales = sales.filter(s => 
-    s.id.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    (s.customerName || '').toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const filteredSales = sales.filter(s => {
+    const saleDate = new Date(s.timestamp);
+    const matchesSearch = s.id.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (s.customerName || '').toLowerCase().includes(searchTerm.toLowerCase());
+    
+    const matchesCustomer = !filters.customer || (s.customerName || '').toLowerCase().includes(filters.customer.toLowerCase());
+    
+    let matchesDate = true;
+    if (filters.startDate) {
+      const start = new Date(filters.startDate);
+      start.setHours(0, 0, 0, 0);
+      matchesDate = matchesDate && saleDate >= start;
+    }
+    if (filters.endDate) {
+      const end = new Date(filters.endDate);
+      end.setHours(23, 59, 59, 999);
+      matchesDate = matchesDate && saleDate <= end;
+    }
+
+    const matchesMinVal = !filters.minValue || s.total >= Number(filters.minValue);
+    const matchesMaxVal = !filters.maxValue || s.total <= Number(filters.maxValue);
+    
+    const matchesProduct = !filters.productName || s.items.some(item => 
+      item.name.toLowerCase().includes(filters.productName.toLowerCase())
+    );
+
+    return matchesSearch && matchesCustomer && matchesDate && matchesMinVal && matchesMaxVal && matchesProduct;
+  });
+
+  const clearFilters = () => {
+    setFilters({
+      customer: '',
+      startDate: '',
+      endDate: '',
+      minValue: '',
+      maxValue: '',
+      productName: ''
+    });
+    setSearchTerm('');
+  };
 
   return (
     <div className="space-y-4">
@@ -244,11 +289,110 @@ export default function SalesPending() {
           </div>
         </div>
         
-        <div className="bg-danger/10 px-4 py-2 rounded-xl border border-danger/20 flex items-center gap-2">
-           <AlertCircle className="w-4 h-4 text-danger" />
-           <p className="text-[10px] font-black text-danger uppercase">Total Pendente: {formatCurrency(sales.reduce((acc, s) => acc + s.total, 0))}</p>
+        <div className="flex flex-wrap items-center gap-3">
+          <button 
+            onClick={() => setShowFilters(!showFilters)}
+            className={cn(
+              "flex items-center gap-2 px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all",
+              showFilters ? "bg-danger text-white" : "bg-white text-slate-400 border border-slate-100"
+            )}
+          >
+            <AlertCircle className="w-4 h-4" />
+            {showFilters ? 'Ocultar Filtros' : 'Filtros Avançados'}
+          </button>
+
+          <div className="bg-danger/10 px-4 py-2 rounded-xl border border-danger/20 flex items-center gap-2">
+             <AlertCircle className="w-4 h-4 text-danger" />
+             <p className="text-[10px] font-black text-danger uppercase">Total Pendente: {formatCurrency(sales.reduce((acc, s) => acc + s.total, 0))}</p>
+          </div>
         </div>
       </div>
+
+      <AnimatePresence>
+        {showFilters && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            className="overflow-hidden px-2"
+          >
+            <div className="bg-white p-6 rounded-[32px] border border-slate-100 shadow-sm space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
+                <div className="space-y-1">
+                  <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1">Cliente</label>
+                  <input 
+                    type="text"
+                    value={filters.customer}
+                    onChange={(e) => setFilters({...filters, customer: e.target.value})}
+                    placeholder="Nome do cliente..."
+                    className="w-full bg-slate-50 border-none rounded-xl px-4 py-2.5 text-xs font-bold outline-none focus:ring-2 focus:ring-danger/10"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1">Produto</label>
+                  <input 
+                    type="text"
+                    value={filters.productName}
+                    onChange={(e) => setFilters({...filters, productName: e.target.value})}
+                    placeholder="Nome do produto..."
+                    className="w-full bg-slate-50 border-none rounded-xl px-4 py-2.5 text-xs font-bold outline-none focus:ring-2 focus:ring-danger/10"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1">Data Início</label>
+                  <input 
+                    type="date"
+                    value={filters.startDate}
+                    onChange={(e) => setFilters({...filters, startDate: e.target.value})}
+                    className="w-full bg-slate-50 border-none rounded-xl px-4 py-2.5 text-xs font-bold outline-none focus:ring-2 focus:ring-danger/10"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1">Data Fim</label>
+                  <input 
+                    type="date"
+                    value={filters.endDate}
+                    onChange={(e) => setFilters({...filters, endDate: e.target.value})}
+                    className="w-full bg-slate-50 border-none rounded-xl px-4 py-2.5 text-xs font-bold outline-none focus:ring-2 focus:ring-danger/10"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+                <div className="space-y-1">
+                  <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1">Valor Mínimo</label>
+                  <input 
+                    type="number"
+                    value={filters.minValue}
+                    onChange={(e) => setFilters({...filters, minValue: e.target.value})}
+                    placeholder="R$ 0,00"
+                    className="w-full bg-slate-50 border-none rounded-xl px-4 py-2.5 text-xs font-bold outline-none focus:ring-2 focus:ring-danger/10"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1">Valor Máximo</label>
+                  <input 
+                    type="number"
+                    value={filters.maxValue}
+                    onChange={(e) => setFilters({...filters, maxValue: e.target.value})}
+                    placeholder="R$ 9999,99"
+                    className="w-full bg-slate-50 border-none rounded-xl px-4 py-2.5 text-xs font-bold outline-none focus:ring-2 focus:ring-danger/10"
+                  />
+                </div>
+                <div className="flex items-end">
+                  <button 
+                    onClick={clearFilters}
+                    className="flex items-center justify-center gap-2 w-full h-[40px] bg-slate-100 text-slate-500 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-slate-200 transition-colors"
+                  >
+                    <X className="w-4 h-4" />
+                    Limpar Filtros
+                  </button>
+                </div>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <div className="relative px-2">
         <Search className="absolute left-6 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
