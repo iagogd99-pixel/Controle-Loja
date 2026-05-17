@@ -505,7 +505,7 @@ export default function Finances() {
                    <div key={m.id} className="p-4 flex items-center justify-between hover:bg-slate-50 transition-colors">
                       <div>
                          <p className="text-sm font-bold text-slate-800">
-                           {m.category === 'venda' ? `Sale #${m.saleId?.slice(-4)}` : m.reason}
+                           {m.category === 'venda' ? `Venda #${m.saleId?.slice(-4)}` : m.reason}
                          </p>
                          <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-0.5">
                            {m.category || (m.type === 'in' ? 'entrada' : 'saída')} · {format(date, "dd/MM/yyyy, HH:mm:ss")}

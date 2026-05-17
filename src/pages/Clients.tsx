@@ -231,18 +231,18 @@ export default function Clients() {
                 <InfoItem icon={MapPin} label="Endereço" value={selectedClient.address || 'Não informado'} />
                 <InfoItem icon={Calendar} label="Nascimento" value={selectedClient.birthDate || 'Não informado'} />
                 
-                <div className="pt-6 grid grid-cols-2 gap-2">
+                <div className="pt-6 flex gap-3">
                   <button
                     onClick={(e) => openForm(selectedClient, e)}
-                    className="py-4 bg-primary text-white font-black rounded-3xl flex items-center justify-center gap-2 text-xs shadow-lg shadow-primary/20 hover:scale-[1.02] transition-transform uppercase"
+                    className="w-16 h-16 bg-primary text-white font-black rounded-3xl flex items-center justify-center shadow-lg shadow-primary/20 hover:scale-[1.02] transition-transform uppercase"
                   >
-                    <Edit2 className="w-4 h-4" /> Editar
+                    <Edit2 className="w-5 h-5" />
                   </button>
                   <button
                     onClick={(e) => handleDelete(selectedClient.id, e)}
-                    className="py-4 bg-danger/10 text-danger font-black rounded-3xl flex items-center justify-center gap-2 text-xs hover:bg-danger hover:text-white transition-all uppercase"
+                    className="w-16 h-16 bg-danger/10 text-danger font-black rounded-3xl flex items-center justify-center hover:bg-danger hover:text-white transition-all uppercase"
                   >
-                    <Trash2 className="w-4 h-4" /> Excluir
+                    <Trash2 className="w-5 h-5" />
                   </button>
                 </div>
               </div>

@@ -20,10 +20,9 @@ import {
 } from 'lucide-react';
 import { useAuth } from '@/src/contexts/AuthContext';
 import { cn } from '@/src/lib/utils';
-import { auth, db } from '@/src/lib/firebase';
+import { db } from '@/src/lib/firebase';
 import { useNavigate } from 'react-router-dom';
-import { updatePassword, reauthenticateWithCredential, EmailAuthProvider } from 'firebase/auth';
-import { collection, getDocs, updateDoc, deleteDoc, doc, onSnapshot } from 'firebase/firestore';
+import { collection, updateDoc, deleteDoc, doc, onSnapshot, getDoc } from 'firebase/firestore';
 import { UserProfile } from '@/src/types';
 
 function UserCard({ 
@@ -113,7 +112,7 @@ function UserCard({
 }
 
 export default function Settings() {
-  const { profile, isAdmin } = useAuth();
+  const { profile, isAdmin, logout } = useAuth();
   const navigate = useNavigate();
   const securityRef = useRef<HTMLDivElement>(null);
   const usersRef = useRef<HTMLDivElement>(null);
@@ -144,14 +143,6 @@ export default function Settings() {
     }
   }, [isAdmin]);
 
-  const scrollToSecurity = () => {
-    securityRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  };
-
-  const scrollToUsers = () => {
-    usersRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  };
-
   const handleUpdatePassword = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
@@ -167,16 +158,31 @@ export default function Settings() {
       return;
     }
 
-    if (!auth.currentUser || !auth.currentUser.email) return;
+    if (!profile) return;
 
     setIsUpdating(true);
     try {
-      // Re-authenticate user first
-      const credential = EmailAuthProvider.credential(auth.currentUser.email, currentPassword);
-      await reauthenticateWithCredential(auth.currentUser, credential);
+      // Manual check for current password (since we store it in firestore now)
+      const userRef = doc(db, 'users', profile.uid);
+      const userDoc = await getDoc(userRef);
       
-      // Update password
-      await updatePassword(auth.currentUser, newPassword);
+      if (!userDoc.exists() || userDoc.data()?.password !== currentPassword) {
+        setError('Senha atual incorreta.');
+        return;
+      }
+      
+      // Update password in firestore
+      await updateDoc(userRef, { 
+        password: newPassword,
+        mustChangePassword: false 
+      });
+      
+      // Update local profile if it was the current user
+      if (profile.uid === profile.uid) {
+        const updatedProfile = { ...profile, mustChangePassword: false };
+        localStorage.setItem('estoquepro_user', JSON.stringify(updatedProfile));
+        // Note: The UI might need a refresh or state sync, but for this app a simple update is enough
+      }
       
       setSuccess(true);
       setCurrentPassword('');
@@ -184,11 +190,7 @@ export default function Settings() {
       setConfirmPassword('');
     } catch (err: any) {
       console.error(err);
-      if (err.code === 'auth/wrong-password') {
-        setError('Senha atual incorreta.');
-      } else {
-        setError('Ocorreu um erro ao atualizar a senha. Tente novamente.');
-      }
+      setError('Ocorreu um erro ao atualizar a senha. Tente novamente.');
     } finally {
       setIsUpdating(false);
     }
@@ -230,8 +232,8 @@ export default function Settings() {
          {/* Navigation */}
          <div className="space-y-1">
             <SettingsLink icon={User} label="Meu Perfil" active />
-            <SettingsLink icon={Shield} label="Segurança" onClick={scrollToSecurity} />
-            {isAdmin && <SettingsLink icon={Users} label="Usuários" onClick={scrollToUsers} />}
+            <SettingsLink icon={Shield} label="Segurança" onClick={() => securityRef.current?.scrollIntoView({ behavior: 'smooth' })} />
+            {isAdmin && <SettingsLink icon={Users} label="Usuários" onClick={() => usersRef.current?.scrollIntoView({ behavior: 'smooth' })} />}
          </div>
 
          {/* Content */}
@@ -244,24 +246,18 @@ export default function Settings() {
                   </div>
                   <div>
                      <h4 className="font-bold text-slate-800 dark:text-slate-100 text-lg">{profile?.name}</h4>
-                     <p className="text-slate-500 dark:text-slate-400 text-sm">{profile?.email}</p>
-                     <button className="text-accent text-xs font-bold mt-2 hover:underline">Alterar foto</button>
+                     <p className="text-slate-500 dark:text-slate-400 text-sm">{profile?.username}</p>
+                     <p className="text-[10px] text-slate-400 font-bold uppercase mt-1">Cargo: {profile?.role}</p>
                   </div>
                </div>
 
                <div className="grid grid-cols-1 gap-4">
                   <div className="space-y-1">
                      <label className="text-sm font-semibold text-slate-700 dark:text-slate-300">Nome de Exibição</label>
-                     <input className="form-input" defaultValue={profile?.name} />
-                  </div>
-                  <div className="space-y-1">
-                     <label className="text-sm font-semibold text-slate-700 dark:text-slate-300">Cargo / Função</label>
-                     <input className="form-input opacity-60" defaultValue={profile?.role} readOnly />
+                     <input className="form-input" defaultValue={profile?.name} readOnly />
+                     <p className="text-[10px] text-slate-400 mt-1 italic">* Contate o administrador para alterar o nome</p>
                   </div>
                </div>
-               <button className="bg-accent text-white font-bold py-2 px-6 rounded-xl text-sm shadow-lg shadow-accent/20 transition-transform active:scale-95">
-                  Salvar Alterações
-               </button>
             </div>
 
             <div ref={securityRef} className="bg-white dark:bg-slate-900 p-6 rounded-2xl shadow-sm border border-gray-100 dark:border-slate-800 space-y-6 transition-colors">
@@ -387,7 +383,7 @@ export default function Settings() {
                   </div>
                </div>
                <button 
-                onClick={() => { auth.signOut(); navigate('/login'); }}
+                onClick={() => { logout(); navigate('/login'); }}
                 className="w-full py-3 bg-danger text-white font-bold rounded-xl shadow-lg shadow-danger/20 transition-transform active:scale-95"
                >
                  Sair da Conta

@@ -11,15 +11,19 @@ import { ProtectedRoute } from '@/src/components/ProtectedRoute';
 import { Layout } from '@/src/components/Layout';
 
 // Mock Pages (will be replaced in next steps)
+const Login = React.lazy(() => import('@/src/pages/Login'));
 const Dashboard = React.lazy(() => import('@/src/pages/Dashboard'));
 const Products = React.lazy(() => import('@/src/pages/Products'));
 const ProductForm = React.lazy(() => import('@/src/pages/ProductForm'));
 const Sales = React.lazy(() => import('@/src/pages/Sales'));
 const SalesHistory = React.lazy(() => import('@/src/pages/SalesHistory'));
+const SalesPending = React.lazy(() => import('@/src/pages/SalesPending'));
+const PurchasesPending = React.lazy(() => import('@/src/pages/PurchasesPending'));
 const Finances = React.lazy(() => import('@/src/pages/Finances'));
 const Reports = React.lazy(() => import('@/src/pages/Reports'));
 const Clients = React.lazy(() => import('@/src/pages/Clients'));
 const Suppliers = React.lazy(() => import('@/src/pages/Suppliers'));
+const Users = React.lazy(() => import('@/src/pages/Users'));
 const Settings = React.lazy(() => import('@/src/pages/Settings'));
 const Categories = React.lazy(() => import('@/src/pages/Categories'));
 const Purchases = React.lazy(() => import('@/src/pages/Purchases'));
@@ -36,6 +40,8 @@ export default function App() {
           </div>
         }>
           <Routes>
+            <Route path="/login" element={<Login />} />
+            
             <Route path="/" element={
               <ProtectedRoute>
                 <Layout><Dashboard /></Layout>
@@ -72,6 +78,18 @@ export default function App() {
               </ProtectedRoute>
             } />
 
+            <Route path="/vendas-pendentes" element={
+              <ProtectedRoute>
+                <Layout><SalesPending /></Layout>
+              </ProtectedRoute>
+            } />
+
+            <Route path="/compras-pendentes" element={
+              <ProtectedRoute>
+                <Layout><PurchasesPending /></Layout>
+              </ProtectedRoute>
+            } />
+
             <Route path="/financas" element={
               <ProtectedRoute>
                 <Layout><Finances /></Layout>
@@ -93,6 +111,12 @@ export default function App() {
             <Route path="/fornecedores" element={
               <ProtectedRoute>
                 <Layout><Suppliers /></Layout>
+              </ProtectedRoute>
+            } />
+
+            <Route path="/usuarios" element={
+              <ProtectedRoute adminOnly>
+                <Layout><Users /></Layout>
               </ProtectedRoute>
             } />
 

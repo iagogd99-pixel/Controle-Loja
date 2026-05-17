@@ -146,18 +146,10 @@ export default function SalesHistory() {
             <ShoppingCartIcon className="w-6 h-6" />
           </div>
           <div>
-            <h1 className="text-2xl font-black text-primary tracking-tight leading-none">Vendas</h1>
+            <h1 className="text-2xl font-black text-primary tracking-tight leading-none">Vendas Recebidas</h1>
             <p className="text-[10px] text-slate-400 font-bold tracking-widest uppercase leading-none mt-1">Histórico & Movimentações</p>
           </div>
         </div>
-        
-        <Link 
-          to="/vendas"
-          className="flex items-center justify-center gap-2 px-6 py-3.5 bg-accent text-white font-black rounded-2xl shadow-lg shadow-accent/20 hover:scale-[1.02] active:scale-[0.98] transition-all uppercase text-xs tracking-tighter"
-        >
-          <Plus className="w-4 h-4" />
-          Nova Venda
-        </Link>
       </div>
 
       <div className="relative px-2">
@@ -186,6 +178,12 @@ export default function SalesHistory() {
                   <Clock className="w-4 h-4 text-slate-400 group-hover:text-accent" />
                 </div>
                 <div className="flex items-center gap-1">
+                  <div className={cn(
+                    "px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-tighter",
+                    sale.paymentStatus === 'pending' ? "bg-danger/10 text-danger" : "bg-success/10 text-success"
+                  )}>
+                    {sale.paymentStatus === 'pending' ? 'A Receber' : 'Recebido'}
+                  </div>
                   <button
                     type="button"
                     onMouseDown={(e) => e.stopPropagation()}
@@ -194,8 +192,7 @@ export default function SalesHistory() {
                       e.stopPropagation();
                       handleDelete(sale, e);
                     }}
-                    className="p-3 text-slate-500 hover:text-danger hover:bg-danger/10 rounded-xl transition-all z-50 relative pointer-events-auto"
-                    title="Excluir Venda"
+                    className="w-10 h-10 flex items-center justify-center text-slate-400 hover:text-danger hover:bg-danger/10 rounded-lg transition-all"
                   >
                     <Trash2 className="w-5 h-5" />
                   </button>

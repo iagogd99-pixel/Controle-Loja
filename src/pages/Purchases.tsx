@@ -8,30 +8,28 @@ import {
   Loader2,
   ChevronRight,
   Eye,
-  FileText
+  FileText,
+  Trash2,
+  AlertCircle,
+  Pencil
 } from 'lucide-react';
 import { 
   collection, 
   query, 
   orderBy, 
   onSnapshot, 
-  Timestamp 
+  Timestamp,
+  where,
+  doc,
+  deleteDoc
 } from 'firebase/firestore';
 import { db } from '@/src/lib/firebase';
+import { Purchase } from '@/src/types';
 import { formatCurrency } from '@/src/lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { Link } from 'react-router-dom';
-
-interface Purchase {
-  id: string;
-  total: number;
-  supplierName: string;
-  timestamp: any;
-  status: 'completed' | 'cancelled';
-  itemsCount: number;
-}
 
 export default function Purchases() {
   const [purchases, setPurchases] = useState<Purchase[]>([]);
@@ -39,7 +37,11 @@ export default function Purchases() {
   const [searchTerm, setSearchTerm] = useState('');
 
   useEffect(() => {
-    const q = query(collection(db, 'purchases'), orderBy('timestamp', 'desc'));
+    const q = query(
+      collection(db, 'purchases'), 
+      where('paymentStatus', '==', 'paid'),
+      orderBy('timestamp', 'desc')
+    );
     const unsub = onSnapshot(q, (snapshot) => {
       const docs = snapshot.docs.map(doc => ({
         id: doc.id,
@@ -51,6 +53,17 @@ export default function Purchases() {
     });
     return () => unsub();
   }, []);
+
+  const handleDelete = async (purchase: Purchase) => {
+    if (!confirm(`Deseja realmente excluir esta compra #${purchase.id.slice(-6).toUpperCase()}? O estoque não será revertido automaticamente.`)) return;
+    
+    try {
+      await deleteDoc(doc(db, 'purchases', purchase.id));
+    } catch (error) {
+      console.error(error);
+      alert('Erro ao excluir compra');
+    }
+  };
 
   const filteredPurchases = purchases.filter(p => 
     p.supplierName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -65,17 +78,10 @@ export default function Purchases() {
             <Truck className="w-6 h-6" />
           </div>
           <div>
-            <h1 className="text-2xl font-black text-primary tracking-tight leading-none">Compras</h1>
+            <h1 className="text-2xl font-black text-primary tracking-tight leading-none">Compras Pagas</h1>
             <p className="text-[10px] text-slate-400 uppercase font-bold tracking-widest mt-1">Histórico de Entradas de Estoque</p>
           </div>
         </div>
-        <Link 
-          to="/compras/nova"
-          className="bg-accent hover:bg-accent/90 text-white px-6 py-3.5 rounded-2xl font-black flex items-center justify-center gap-2 shadow-xl shadow-accent/20 hover:scale-[1.02] active:scale-95 transition-all text-xs uppercase tracking-widest"
-        >
-          <Plus className="w-5 h-5" />
-          Nova Nota de Entrada
-        </Link>
       </header>
 
       {/* Search Bar */}
@@ -142,9 +148,20 @@ export default function Purchases() {
                       <p className="text-[10px] font-black text-accent uppercase tracking-widest mb-1">Total Pago</p>
                       <p className="text-xl font-black text-primary">{formatCurrency(purchase.total)}</p>
                     </div>
-                    <button className="p-3 bg-slate-50 text-slate-300 rounded-xl hover:bg-primary/10 hover:text-primary transition-all hidden md:block">
-                      <ChevronRight className="w-5 h-5" />
-                    </button>
+                    <div className="flex gap-2">
+                       <Link 
+                        to={`/compras/nova?edit=${purchase.id}`}
+                        className="w-12 h-12 flex items-center justify-center bg-slate-50 text-slate-300 rounded-xl hover:bg-accent/10 hover:text-accent transition-all"
+                      >
+                        <Pencil className="w-5 h-5" />
+                      </Link>
+                      <button 
+                        onClick={() => handleDelete(purchase)}
+                        className="w-12 h-12 flex items-center justify-center bg-slate-50 text-slate-300 rounded-xl hover:bg-danger/10 hover:text-danger transition-all"
+                      >
+                        <Trash2 className="w-5 h-5" />
+                      </button>
+                    </div>
                   </div>
                 </div>
               </motion.div>

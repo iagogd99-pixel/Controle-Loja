@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { 
   ArrowLeft, 
   Plus, 
+  Minus,
   Trash2, 
   Search, 
   Loader2, 
@@ -41,6 +42,9 @@ interface Product {
   sku: string;
   stock: number;
   costPrice: number;
+  minStock: number;
+  images?: string[];
+  size?: string;
 }
 
 interface PurchaseItem {
@@ -49,6 +53,7 @@ interface PurchaseItem {
   quantity: number;
   price: number; // For cost price at time of purchase
   total: number;
+  image?: string;
 }
 
 interface Supplier {
@@ -76,7 +81,10 @@ export default function PurchaseForm() {
   const [fee, setFee] = useState(0);
   const [freight, setFreight] = useState(0);
   const [paymentMethod, setPaymentMethod] = useState('dinheiro');
+  const [paymentStatus, setPaymentStatus] = useState<'paid' | 'pending'>('paid');
   const [installments, setInstallments] = useState(1);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [originalPurchase, setOriginalPurchase] = useState<any>(null);
   
   // Search state
   const [showProductSearch, setShowProductSearch] = useState(false);
@@ -111,8 +119,33 @@ export default function PurchaseForm() {
       setProducts(snapshot.docs.map(d => ({ id: d.id, ...d.data() })) as Product[]);
     });
 
+    // Check for edit mode
+    const editId = searchParams.get('edit');
+    if (editId) {
+      setEditingId(editId);
+      const fetchPurchase = async () => {
+        const docRef = doc(db, 'purchases', editId);
+        const docSnap = await (await import('firebase/firestore')).getDoc(docRef);
+        if (docSnap.exists()) {
+          const data = docSnap.data();
+          setOriginalPurchase(data);
+          setCart(data.items || []);
+          setSelectedSupplierId(data.supplierId || '');
+          setSelectedSupplierName(data.supplierName || '');
+          setNote(data.note || '');
+          setDiscount(data.discount || 0);
+          setFee(data.fee || 0);
+          setFreight(data.freight || 0);
+          setPaymentMethod(data.paymentMethod || 'dinheiro');
+          setPaymentStatus(data.paymentStatus || 'paid');
+          setInstallments(data.installments || 1);
+        }
+      };
+      fetchPurchase();
+    }
+
     return () => unsubscribe();
-  }, []);
+  }, [searchParams]);
 
   const addToCart = React.useCallback((product: Product) => {
     setCart(prevCart => {
@@ -129,11 +162,11 @@ export default function PurchaseForm() {
           name: product.name,
           quantity: 1,
           price: product.costPrice || 0,
-          total: product.costPrice || 0
+          total: product.costPrice || 0,
+          image: product.images?.[0]
         }];
       }
     });
-    setShowProductSearch(false);
     setSearchTerm('');
   }, []);
 
@@ -185,8 +218,50 @@ export default function PurchaseForm() {
       
       // Use a transaction to ensure stock consistency
       await runTransaction(db, async (transaction) => {
-        // 1. Create the purchase document
-        const purchaseRef = doc(collection(db, 'purchases'));
+        // 1. Create/Update the purchase document
+        const purchaseRef = editingId ? doc(db, 'purchases', editingId) : doc(collection(db, 'purchases'));
+        const numInstallments = (paymentMethod === 'cartão' || paymentMethod === 'transferência') ? installments : 1;
+        
+        const installmentsList = [];
+        if (paymentStatus === 'pending') {
+          const partAmount = finalTotal / numInstallments;
+          for (let i = 1; i <= numInstallments; i++) {
+            const dueDate = new Date();
+            dueDate.setMonth(dueDate.getMonth() + i);
+            dueDate.setDate(10); // Day 10 as requested
+            installmentsList.push({
+              id: i,
+              amount: Number(partAmount.toFixed(2)),
+              dueDate: dueDate.toISOString(),
+              status: 'pending'
+            });
+          }
+        }
+
+        // If editing, revert old stock changes first
+        if (editingId && originalPurchase) {
+          for (const item of originalPurchase.items) {
+            const productRef = doc(db, 'products', item.productId);
+            transaction.update(productRef, {
+              stock: increment(-item.quantity), // Subtract what was added
+              updatedAt: serverTimestamp()
+            });
+            
+            // Register reversal movement
+            const movementRef = doc(collection(db, 'movements'));
+            transaction.set(movementRef, {
+              productId: item.productId,
+              productName: item.name,
+              type: 'out',
+              quantity: item.quantity,
+              reason: `Estorno (Edição) Compra #${editingId.slice(-6).toUpperCase()}`,
+              userId: profile.uid,
+              userName: profile.name,
+              timestamp: serverTimestamp()
+            });
+          }
+        }
+
         const purchaseData = {
           supplierId: selectedSupplierId,
           supplierName: selectedSupplierName || (suppliers.find(s => s.id === selectedSupplierId)?.name) || 'Fornecedor Avulso',
@@ -196,17 +271,44 @@ export default function PurchaseForm() {
           freight: freight,
           total: finalTotal,
           paymentMethod: paymentMethod,
-          installments: paymentMethod === 'cartão' ? installments : 1,
+          paymentStatus: paymentStatus,
+          installments: numInstallments,
+          installmentsList: installmentsList,
           status: 'completed',
-          timestamp: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+          ...(editingId ? {} : { timestamp: serverTimestamp() }),
           userId: profile.uid,
           userName: profile.name,
           note: note,
           items: cart
         };
-        transaction.set(purchaseRef, purchaseData);
+        
+        if (editingId) {
+          transaction.update(purchaseRef, purchaseData);
+        } else {
+          transaction.set(purchaseRef, purchaseData);
+        }
 
-        // 2. Update stock and register movements for each product
+        // 1.1 Record Financial Movement - ONLY if PAID
+        // For simplicity during edit, if it was paid, we stay paid. 
+        // Real logic would be more complex (comparing old vs new), 
+        // but let's at least record a movement if this is a new purchase or if status changed to paid.
+        if (paymentStatus === 'paid' && (!editingId || originalPurchase.paymentStatus !== 'paid')) {
+          const movementRef = doc(collection(db, 'cash_movements'));
+          transaction.set(movementRef, {
+            amount: finalTotal,
+            type: 'out',
+            category: 'compra',
+            paymentMethod: paymentMethod,
+            reason: `Compra #${purchaseRef.id.slice(-6).toUpperCase()}`,
+            userId: profile.uid,
+            userName: profile.name,
+            purchaseId: purchaseRef.id,
+            timestamp: serverTimestamp()
+          });
+        }
+
+        // 2. Update stock and register movements for each product (New values)
         for (const item of cart) {
           const productRef = doc(db, 'products', item.productId);
           
@@ -224,7 +326,7 @@ export default function PurchaseForm() {
             productName: item.name,
             type: 'in',
             quantity: item.quantity,
-            reason: `Entrada via Compra #${purchaseRef.id.slice(-6).toUpperCase()}`,
+            reason: `${editingId ? 'Ajuste (Edição)' : 'Entrada'} via Compra #${purchaseRef.id.slice(-6).toUpperCase()}`,
             userId: profile.uid,
             userName: profile.name,
             timestamp: serverTimestamp()
@@ -247,362 +349,323 @@ export default function PurchaseForm() {
   );
 
   return (
-    <div className="max-w-4xl mx-auto space-y-8 pb-32">
-      <header className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div className="flex items-center gap-4">
+    <div className="max-w-2xl mx-auto w-full space-y-4">
+      <header className="flex items-center justify-between gap-3 px-2">
+        <div className="flex items-center gap-3">
           <button 
             onClick={() => navigate('/compras')}
-            className="w-12 h-12 bg-white rounded-2xl flex items-center justify-center text-slate-400 hover:text-primary shadow-sm border border-slate-100 transition-all"
+            className="w-10 h-10 bg-primary/5 rounded-xl flex items-center justify-center text-primary hover:bg-primary/10 transition-all"
           >
             <ArrowLeft className="w-5 h-5" />
           </button>
           <div>
-            <h1 className="text-2xl font-black text-primary tracking-tighter">Nota de Entrada</h1>
-            <p className="text-slate-400 font-bold uppercase text-[10px] tracking-widest leading-none mt-1">Registrar Compras de Fornecedores</p>
+            <h1 className="text-2xl font-black text-primary tracking-tight leading-none">
+              {editingId ? 'Editar Compra' : 'Nova Compra'}
+            </h1>
+            <p className="text-[10px] text-slate-500 font-bold tracking-widest uppercase mt-1">
+              {editingId ? `Nota #${editingId.slice(-6).toUpperCase()}` : 'Registrar Entrada'}
+            </p>
           </div>
+        </div>
+        <div className="text-[10px] font-bold text-slate-400 flex items-center gap-2 bg-white px-3 py-1.5 rounded-full shadow-sm border border-gray-100 w-fit h-fit">
+          <span className="w-1.5 h-1.5 bg-success rounded-full animate-pulse" />
+          {profile?.name}
         </div>
       </header>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        {/* Main Content: Document Items */}
-        <div className="lg:col-span-2 space-y-6">
-          <div className="bg-white rounded-[32px] border border-slate-100 shadow-sm overflow-hidden">
-            <div className="p-6 border-b border-slate-50">
-               <button 
-                onClick={() => setShowAddItemOptions(true)}
-                className="w-full h-14 bg-slate-50 text-slate-600 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-accent hover:text-white transition-all flex items-center justify-center gap-2"
-               >
-                 <Plus className="w-4 h-4" />
-                 Adicionar Item
-               </button>
-            </div>
+      {/* Search Section */}
+      <div className="relative px-2">
+        <Search className="absolute left-6 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+        <input 
+          type="text"
+          placeholder="Buscar por nome ou SKU..."
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+          className="w-full pl-11 pr-11 py-4 bg-white border border-gray-100 rounded-2xl shadow-sm outline-none focus:ring-2 focus:ring-accent/20 transition-all text-sm font-medium"
+        />
+        <Plus 
+          onClick={() => navigate('/produtos?new=true&returnTo=/compras/nova')}
+          className="absolute right-6 top-1/2 -translate-y-1/2 w-4 h-4 text-accent cursor-pointer" 
+        />
 
-            <div className="divide-y divide-slate-50 min-h-[300px]">
-              {cart.map((item) => (
-                <div key={item.productId} className="p-6 flex flex-col md:flex-row md:items-center justify-between gap-4 group">
-                  <div className="flex-1 min-w-0">
-                    <p className="text-xs font-black text-slate-400 uppercase tracking-widest mb-0.5">Nome do Produto</p>
-                    <p className="text-sm font-black text-primary truncate">{item.name}</p>
+        <AnimatePresence>
+          {searchTerm.length > 0 && (
+            <motion.div
+              initial={{ opacity: 0, y: -10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              className="absolute left-0 right-0 mt-2 bg-white rounded-3xl shadow-2xl border border-slate-100 z-30 max-h-[60vh] overflow-hidden flex flex-col"
+            >
+              <div className="p-4 border-b border-slate-50 flex justify-between items-center">
+                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Produtos ({filteredProducts.length})</span>
+                <button onClick={() => setSearchTerm('')} className="p-1 text-slate-300 hover:text-slate-600 transition-colors">
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+              <div className="overflow-y-auto flex-1 p-2 space-y-1">
+                {filteredProducts.length > 0 ? (
+                  filteredProducts.map(product => (
+                    <div 
+                      key={product.id}
+                      className="flex items-center gap-4 p-3 rounded-2xl transition-all group hover:bg-slate-50"
+                    >
+                      <div className="w-12 h-12 rounded-xl bg-slate-100 overflow-hidden flex-shrink-0 flex items-center justify-center">
+                        {product.images?.[0] ? (
+                          <img src={product.images[0]} className="w-full h-full object-cover" />
+                        ) : (
+                          <Package className="w-5 h-5 text-slate-300" />
+                        )}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-black text-slate-800 leading-tight uppercase truncate">{product.name}</p>
+                        <div className="flex items-center gap-3 mt-0.5">
+                          <span className="text-[10px] font-bold text-slate-400">SKU: {product.sku}</span>
+                          <span className="text-[10px] font-bold text-slate-400">Estoque: {product.stock}</span>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-4">
+                        <div className="text-right">
+                           <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Custo Est.</p>
+                           <span className="text-sm font-black text-accent">{formatCurrency(product.costPrice || 0)}</span>
+                        </div>
+                        <button
+                          onClick={() => addToCart(product)}
+                          className="w-10 h-10 rounded-xl flex items-center justify-center bg-primary text-white shadow-lg shadow-primary/20 hover:scale-105 active:scale-95 transition-all"
+                        >
+                          <Plus className="w-5 h-5" />
+                        </button>
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="py-12 text-center">
+                    <div className="w-12 h-12 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-3">
+                      <ShoppingCart className="w-6 h-6 text-slate-300" />
+                    </div>
+                    <p className="text-xs font-bold text-slate-400">Nenhum produto encontrado</p>
                   </div>
-                  
-                  <div className="flex items-center gap-6">
-                    <div className="w-24">
-                       <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Custo (R$)</p>
-                       <input 
-                        type="number"
-                        step="0.01"
-                        value={item.price}
-                        onChange={(e) => updatePrice(item.productId, Number(e.target.value))}
-                        className="w-full h-10 bg-slate-50 rounded-lg px-2 text-sm font-black text-primary outline-none focus:border-accent border-2 border-transparent transition-all"
-                       />
+                )}
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
+
+      {/* Cart & Checkout */}
+      <div className="bg-white rounded-[40px] shadow-2xl border border-gray-100 flex flex-col overflow-hidden">
+        <div className="p-4 border-b border-gray-100">
+          <div className="flex items-center justify-between mb-3 px-2">
+            <h3 className="text-lg font-bold text-primary flex items-center gap-2">
+              <ShoppingCart className="w-5 h-5" /> Itens da Nota
+            </h3>
+            <span className="bg-accent/10 text-accent text-[10px] font-black px-3 py-1 rounded-full uppercase tracking-widest">
+              {cart.length} itens
+            </span>
+          </div>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-4 max-h-[400px]">
+          <AnimatePresence mode="popLayout">
+            <div className="space-y-3">
+              {cart.map(item => (
+                <motion.div 
+                  layout
+                  key={item.productId}
+                  initial={{ opacity: 0, x: -20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: -20 }}
+                  className="bg-slate-50 border border-slate-100 rounded-[24px] p-3 flex items-center gap-4 group relative"
+                >
+                  <div className="w-16 h-16 bg-white rounded-2xl overflow-hidden flex-shrink-0 relative">
+                    {item.image ? (
+                      <img src={item.image} alt={item.name} className="w-full h-full object-cover" />
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center opacity-10">
+                        <Package className="w-8 h-8" />
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-black text-slate-800 uppercase leading-tight truncate">
+                      {item.name}
+                    </p>
+                    <div className="flex items-center gap-2 mt-1">
+                      <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Custo:</span>
+                      <div className="relative">
+                        <input 
+                          type="number"
+                          step="0.01"
+                          value={item.price || ''}
+                          onChange={(e) => updatePrice(item.productId, Number(e.target.value))}
+                          className="w-20 bg-white border border-slate-200 rounded-lg px-2 py-0.5 text-[10px] font-black text-accent outline-none"
+                        />
+                      </div>
                     </div>
-                    <div className="w-20">
-                       <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">QTD</p>
-                       <input 
-                        type="number"
-                        min="1"
-                        value={item.quantity}
-                        onChange={(e) => updateQuantity(item.productId, Number(e.target.value))}
-                        className="w-full h-10 bg-slate-50 rounded-lg px-2 text-sm font-black text-primary outline-none focus:border-accent border-2 border-transparent transition-all"
-                       />
+                  </div>
+
+                  <div className="flex items-center gap-3">
+                    <div className="flex items-center bg-white rounded-xl p-1 shadow-sm border border-slate-100">
+                      <button 
+                        onClick={() => updateQuantity(item.productId, item.quantity - 1)} 
+                        className="w-8 h-8 flex items-center justify-center bg-slate-50 text-slate-400 rounded-lg hover:text-danger transition-colors"
+                      >
+                        <Minus className="w-3.5 h-3.5" />
+                      </button>
+                      <span className="w-8 text-center text-xs font-black text-slate-800">{item.quantity}</span>
+                      <button 
+                        onClick={() => updateQuantity(item.productId, item.quantity + 1)} 
+                        className="w-8 h-8 flex items-center justify-center bg-slate-50 text-slate-400 rounded-lg hover:text-accent transition-colors"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                      </button>
                     </div>
-                    <div className="text-right min-w-[100px]">
-                       <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Subtotal</p>
-                       <p className="text-sm font-black text-primary">{formatCurrency(item.total)}</p>
-                    </div>
+                    
                     <button 
                       onClick={() => removeFromCart(item.productId)}
-                      className="p-2 text-slate-200 hover:text-danger hover:bg-danger/5 rounded-lg transition-all"
+                      className="p-2 text-slate-300 hover:text-danger transition-colors"
                     >
                       <Trash2 className="w-4 h-4" />
                     </button>
                   </div>
-                </div>
+                </motion.div>
               ))}
-              
-              {cart.length === 0 && (
-                <div className="flex flex-col items-center justify-center py-20 text-slate-300">
-                  <ShoppingCart className="w-12 h-12 mb-4 opacity-20" />
-                  <p className="text-xs font-black uppercase tracking-widest">Nenhum item adicionado</p>
-                </div>
-              )}
             </div>
-          </div>
+          </AnimatePresence>
+          {cart.length === 0 && (
+            <div className="py-12 flex flex-col items-center justify-center text-slate-400 opacity-30">
+               <Package className="w-12 h-12 mb-3" />
+               <p className="text-xs font-bold uppercase tracking-widest">Nenhum item adicionado</p>
+            </div>
+          )}
         </div>
 
-        {/* Sidebar: Totals & Info */}
-        <div className="space-y-6">
-          <div className="bg-white p-8 rounded-[32px] border border-slate-100 shadow-sm space-y-6">
-            <div className="space-y-1">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Fornecedor</label>
-              <select 
-                value={selectedSupplierId}
-                onChange={(e) => {
-                  const id = e.target.value;
-                  setSelectedSupplierId(id);
-                  const supplier = suppliers.find(s => s.id === id);
-                  setSelectedSupplierName(supplier?.name || '');
-                }}
-                className="w-full h-14 bg-slate-50 border-none rounded-2xl px-6 font-bold text-slate-700 outline-none"
-              >
-                <option value="">Selecione um Fornecedor</option>
-                {suppliers.map(s => (
-                  <option key={s.id} value={s.id}>{s.name}</option>
-                ))}
-              </select>
-            </div>
+        {/* Purchase Info & Payment */}
+        <div className="p-4 bg-slate-50 rounded-b-[40px] space-y-3 shadow-[0_-10px_20px_rgba(0,0,0,0.02)]">
+          <div className="space-y-3">
+             <div className="flex flex-col gap-1 px-1">
+               <p className="text-[9px] font-bold text-slate-400 uppercase mb-1 pl-1">Fornecedor</p>
+               <select 
+                 value={selectedSupplierId}
+                 onChange={(e) => {
+                   const id = e.target.value;
+                   setSelectedSupplierId(id);
+                   const supplier = suppliers.find(s => s.id === id);
+                   setSelectedSupplierName(supplier?.name || '');
+                 }}
+                 className="w-full px-3 py-2 bg-white border border-gray-100 rounded-xl text-xs font-bold text-slate-700 outline-none focus:ring-1 focus:ring-accent"
+               >
+                 <option value="">Selecione um Fornecedor</option>
+                 {suppliers.map(s => (
+                   <option key={s.id} value={s.id}>{s.name}</option>
+                 ))}
+               </select>
+             </div>
 
-            <div className="space-y-1">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Observações da Nota</label>
-              <textarea 
-                rows={2}
-                value={note}
-                onChange={(e) => setNote(e.target.value)}
-                className="w-full bg-slate-50 border-none rounded-2xl p-6 font-bold text-slate-700 outline-none resize-none text-sm"
-                placeholder="Ex: NF 123..."
-              />
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-1">
-                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Desconto (R$)</label>
-                <input 
-                  type="number"
-                  value={discount}
-                  onChange={(e) => setDiscount(Number(e.target.value))}
-                  className="w-full h-12 bg-slate-50 border-none rounded-xl px-4 font-bold text-slate-700 outline-none"
-                />
-              </div>
-              <div className="space-y-1">
-                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Juros (R$)</label>
-                <input 
-                  type="number"
-                  value={fee}
-                  onChange={(e) => setFee(Number(e.target.value))}
-                  className="w-full h-12 bg-slate-50 border-none rounded-xl px-4 font-bold text-slate-700 outline-none"
-                />
-              </div>
-            </div>
-
-            <div className="space-y-1">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Frete (R$)</label>
-              <input 
-                type="number"
-                value={freight}
-                onChange={(e) => setFreight(Number(e.target.value))}
-                className="w-full h-12 bg-slate-50 border-none rounded-xl px-4 font-bold text-slate-700 outline-none"
-              />
-            </div>
-
-            <div className="space-y-4 pt-4 border-t border-slate-50">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Pagamento</label>
-              <div className="grid grid-cols-2 gap-2">
-                {['dinheiro', 'pix', 'cartão', 'transferência'].map((method) => (
-                  <button
-                    key={method}
-                    type="button"
-                    onClick={() => setPaymentMethod(method)}
-                    className={cn(
-                      "h-10 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all border-2",
-                      paymentMethod === method 
-                        ? "bg-primary border-primary text-white" 
-                        : "bg-white border-slate-100 text-slate-400 hover:border-slate-200"
-                    )}
-                  >
-                    {method}
-                  </button>
-                ))}
-              </div>
-
-              {paymentMethod === 'cartão' && (
-                <div className="space-y-1 animate-in fade-in slide-in-from-top-2">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Parcelas</label>
+             <div className="grid grid-cols-2 gap-3">
+               <div>
+                 <p className="text-[9px] font-bold text-slate-400 uppercase mb-1 pl-1">Desconto (R$)</p>
+                 <input 
+                   type="number"
+                   value={discount || ''}
+                   onChange={(e) => setDiscount(Number(e.target.value))}
+                   placeholder="0,00"
+                   className="w-full px-3 py-1.5 bg-white border border-gray-100 rounded-lg text-xs font-bold focus:ring-1 focus:ring-accent outline-none"
+                 />
+               </div>
+               <div>
+                  <p className="text-[9px] font-bold text-slate-400 uppercase mb-1 pl-1">Parcelas</p>
                   <select 
                     value={installments}
                     onChange={(e) => setInstallments(Number(e.target.value))}
-                    className="w-full h-12 bg-slate-50 border-none rounded-xl px-4 font-bold text-slate-700 outline-none"
+                    className="w-full px-3 py-1.5 bg-white border border-gray-100 rounded-lg text-xs font-bold focus:ring-1 focus:ring-accent outline-none"
                   >
-                    {[...Array(12)].map((_, i) => (
-                      <option key={i + 1} value={i + 1}>{i + 1}x</option>
+                    {[1,2,3,4,5,6,7,8,9,10,11,12].map(n => (
+                      <option key={n} value={n}>{n}x</option>
                     ))}
                   </select>
-                </div>
-              )}
-            </div>
+               </div>
+             </div>
 
-            <div className="pt-6 border-t border-slate-50">
-              <div className="space-y-2 mb-6">
-                <div className="flex items-center justify-between text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                   <span>Subtotal</span>
-                   <span>{formatCurrency(cartTotal)}</span>
-                </div>
-                {discount > 0 && (
-                  <div className="flex items-center justify-between text-[10px] font-black text-danger uppercase tracking-widest">
-                    <span>Desconto</span>
-                    <span>- {formatCurrency(discount)}</span>
-                  </div>
-                )}
-                {(fee > 0 || freight > 0) && (
-                  <div className="flex items-center justify-between text-[10px] font-black text-accent uppercase tracking-widest">
-                    <span>Acréscimos</span>
-                    <span>+ {formatCurrency(fee + freight)}</span>
-                  </div>
-                )}
-                <div className="flex items-center justify-between pt-2">
-                   <span className="text-sm font-black text-slate-400 uppercase tracking-widest">Total Líquido</span>
-                   <span className="text-3xl font-black text-primary tracking-tighter">{formatCurrency(finalTotal)}</span>
-                </div>
-              </div>
-              
-              <button 
-                onClick={handleSubmit}
-                disabled={submitting || cart.length === 0 || !selectedSupplierId}
-                className="w-full h-16 bg-primary text-white font-black rounded-2xl shadow-xl shadow-primary/25 hover:scale-105 active:scale-95 transition-all text-xs uppercase tracking-widest flex items-center justify-center gap-3 disabled:opacity-50"
-              >
-                {submitting ? (
-                  <Loader2 className="w-6 h-6 animate-spin" />
-                ) : (
-                  <>
-                    <Save className="w-5 h-5" />
-                    Finalizar Entrada
-                  </>
-                )}
-              </button>
+             <div className="grid grid-cols-1 gap-3">
+               <div>
+                 <p className="text-[9px] font-bold text-slate-400 uppercase mb-1 pl-1">Frete (R$)</p>
+                 <input 
+                   type="number"
+                   value={freight || ''}
+                   onChange={(e) => setFreight(Number(e.target.value))}
+                   placeholder="0,00"
+                   className="w-full px-3 py-1.5 bg-white border border-gray-100 rounded-lg text-xs font-bold focus:ring-1 focus:ring-accent outline-none"
+                 />
+               </div>
+             </div>
+
+             <div className="space-y-1">
+               <p className="text-[9px] font-bold text-slate-400 uppercase pl-1 pl-1">Status Pagamento</p>
+               <div className="grid grid-cols-2 gap-2">
+                 <button
+                   onClick={() => setPaymentStatus('paid')}
+                   className={cn(
+                     "py-2 px-3 rounded-xl border text-[10px] font-bold transition-all uppercase tracking-widest",
+                     paymentStatus === 'paid' ? "bg-accent border-accent text-white shadow-lg" : "bg-white border-gray-200 text-slate-600"
+                   )}
+                 >
+                   Pago Agora
+                 </button>
+                 <button
+                   onClick={() => setPaymentStatus('pending')}
+                   className={cn(
+                     "py-2 px-3 rounded-xl border text-[10px] font-bold transition-all uppercase tracking-widest",
+                     paymentStatus === 'pending' ? "bg-danger border-danger text-white shadow-lg" : "bg-white border-gray-200 text-slate-600"
+                   )}
+                 >
+                   A Pagar
+                 </button>
+               </div>
+             </div>
+
+             <div className="space-y-1">
+               <p className="text-[9px] font-bold text-slate-400 uppercase pl-1 pl-1">Pagamento</p>
+               <div className="grid grid-cols-4 gap-1.5">
+                 {['dinheiro', 'pix', 'cartão', 'transf.'].map((method) => {
+                   const isActive = paymentMethod === (method === 'transf.' ? 'transferência' : method);
+                   return (
+                    <button
+                      key={method}
+                      onClick={() => setPaymentMethod(method === 'transf.' ? 'transferência' : method)}
+                      className={cn(
+                        "py-2 px-3 rounded-xl border text-[10px] font-bold transition-all uppercase tracking-wide",
+                        isActive ? "bg-accent border-accent text-white shadow-lg" : "bg-white border-gray-200 text-slate-600 hover:border-accent"
+                      )}
+                    >
+                      {method}
+                    </button>
+                   );
+                 })}
+               </div>
+             </div>
+          </div>
+
+          <div className="pt-1">
+            <div className="flex justify-between items-center text-[10px] text-slate-400 font-bold mb-0.5">
+              <span>Subtotal</span>
+              <span>{formatCurrency(cartTotal)}</span>
             </div>
+            <div className="flex justify-between items-center mb-2 pt-1.5 border-t border-gray-200/60">
+              <span className="text-xs font-bold text-slate-600">Total da Nota</span>
+              <span className="text-2xl font-black text-primary">{formatCurrency(finalTotal)}</span>
+            </div>
+            <button 
+              disabled={submitting || cart.length === 0 || !selectedSupplierId}
+              onClick={handleSubmit}
+              className="w-full bg-accent hover:bg-accent/90 text-white font-black py-3.5 rounded-2xl shadow-lg shadow-accent/20 flex items-center justify-center gap-2 transition-all disabled:opacity-50 disabled:grayscale text-[10px] uppercase tracking-widest"
+            >
+              {submitting ? <Loader2 className="w-5 h-5 animate-spin" /> : <Save className="w-5 h-5" />}
+              FINALIZAR COMPRA
+            </button>
           </div>
         </div>
       </div>
-
-      {/* Add Item Options Modal */}
-      <AnimatePresence>
-        {showAddItemOptions && (
-          <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
-            <motion.div 
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={() => setShowAddItemOptions(false)}
-              className="absolute inset-0 bg-slate-900/60 backdrop-blur-md"
-            />
-            <motion.div 
-              initial={{ opacity: 0, scale: 0.9, y: 20 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.9, y: 20 }}
-              className="relative w-full max-w-sm bg-white rounded-[44px] shadow-2xl p-10 overflow-hidden text-center"
-            >
-              <div className="w-20 h-20 bg-primary/5 rounded-[32px] flex items-center justify-center mx-auto mb-8">
-                <Plus className="w-10 h-10 text-primary" />
-              </div>
-
-              <h3 className="text-2xl font-black text-primary tracking-tighter mb-2">Adicionar Item</h3>
-              <p className="text-slate-400 font-bold uppercase text-[10px] tracking-widest mb-10">Como deseja adicionar o produto?</p>
-
-              <div className="space-y-4">
-                <button 
-                  onClick={() => {
-                    setShowAddItemOptions(false);
-                    setShowProductSearch(true);
-                  }}
-                  className="w-full h-16 bg-primary text-white rounded-[20px] font-black text-xs uppercase tracking-widest transition-all flex items-center justify-center gap-4 hover:scale-105 active:scale-95 shadow-xl shadow-primary/20"
-                >
-                  <Search className="w-5 h-5" />
-                  Buscar já adicionado
-                </button>
-
-                <button 
-                  onClick={() => {
-                    navigate('/produtos?new=true&returnTo=/compras/nova');
-                  }}
-                  className="w-full h-16 bg-primary text-white rounded-[20px] font-black text-xs uppercase tracking-widest transition-all flex items-center justify-center gap-4 hover:scale-105 active:scale-95 shadow-xl shadow-primary/20"
-                >
-                  <Package className="w-5 h-5" />
-                  Adicionar produto agora
-                </button>
-              </div>
-
-              <button 
-                onClick={() => setShowAddItemOptions(false)}
-                className="mt-8 text-[10px] font-black text-slate-300 hover:text-slate-500 uppercase tracking-[0.2em] transition-all"
-              >
-                Cancelar
-              </button>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
-
-
-
-      {/* Product Search Modal */}
-      <AnimatePresence>
-        {showProductSearch && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
-            <motion.div 
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={() => setShowProductSearch(false)}
-              className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm"
-            />
-            <motion.div 
-              initial={{ opacity: 0, scale: 0.95, y: 20 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="relative w-full max-w-xl bg-white rounded-[40px] shadow-2xl overflow-hidden flex flex-col h-[600px]"
-            >
-              <div className="p-8 border-b border-slate-50">
-                <div className="flex items-center justify-between mb-6">
-                  <h3 className="text-xl font-black text-primary">Escolher Produto</h3>
-                  <button onClick={() => setShowProductSearch(false)} className="p-2 hover:bg-slate-50 rounded-xl transition-all">
-                    <Trash2 className="w-6 h-6 text-slate-300" />
-                  </button>
-                </div>
-                <div className="relative">
-                  <Search className="absolute left-6 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-300 pointer-events-none" />
-                  <input 
-                    autoFocus
-                    type="text"
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                    placeholder="Nome do produto ou SKU..."
-                    className="w-full h-14 bg-slate-50 border-none rounded-2xl pl-14 pr-6 font-bold text-slate-700 outline-none"
-                  />
-                </div>
-              </div>
-
-              <div className="flex-1 overflow-y-auto p-8 pt-4 space-y-3">
-                 {filteredProducts.map(product => (
-                   <button 
-                    key={product.id}
-                    onClick={() => addToCart(product)}
-                    className="w-full p-6 h-28 bg-white border border-slate-100 rounded-3xl flex items-center justify-between hover:border-accent hover:bg-accent/5 transition-all text-left shadow-sm hover:shadow-md group"
-                   >
-                     <div className="flex items-center gap-4">
-                        <div className="w-12 h-12 bg-slate-50 rounded-2xl flex items-center justify-center text-slate-300 group-hover:bg-white group-hover:text-accent transition-all">
-                          <Package className="w-6 h-6" />
-                        </div>
-                        <div>
-                          <p className="text-sm font-black text-primary group-hover:text-accent transition-colors">{product.name}</p>
-                          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-0.5">SKU: {product.sku} · Estoque: {product.stock}</p>
-                        </div>
-                     </div>
-                     <div className="text-right">
-                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Últ. Custo</p>
-                        <p className="text-sm font-black text-primary">{formatCurrency(product.costPrice || 0)}</p>
-                     </div>
-                   </button>
-                 ))}
-                 
-                 {filteredProducts.length === 0 && (
-                   <div className="text-center py-20 text-slate-300">
-                      <p className="text-xs font-black uppercase tracking-widest">Nenhum produto encontrado</p>
-                   </div>
-                 )}
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
     </div>
   );
 }

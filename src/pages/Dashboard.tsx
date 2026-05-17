@@ -9,7 +9,8 @@ import {
   ArrowUpRight,
   ArrowDownRight,
   Wallet,
-  Activity
+  Activity,
+  Clock
 } from 'lucide-react';
 import { 
   collection, 
@@ -45,7 +46,9 @@ export default function Dashboard() {
     monthlyProfit: 0,
     dailyExpenses: 0,
     monthlyExpenses: 0,
-    totalProfitMargin: 0
+    totalProfitMargin: 0,
+    pendingSalesTotal: 0,
+    pendingPurchasesTotal: 0
   });
   const [recentSales, setRecentSales] = useState<Sale[]>([]);
   const [recentMovements, setRecentMovements] = useState<Movement[]>([]);
@@ -96,6 +99,16 @@ export default function Dashboard() {
     const unsubExpensesMonth = onSnapshot(query(collection(db, 'cash_movements'), where('timestamp', '>=', startOfMonth.toISOString()), where('type', '==', 'out')), (snapshot) => {
       const total = snapshot.docs.reduce((acc, doc) => acc + (doc.data().amount || 0), 0);
       setStats(prev => ({ ...prev, monthlyExpenses: total }));
+    });
+
+    const unsubPendingSales = onSnapshot(query(collection(db, 'sales'), where('paymentStatus', '==', 'pending')), (snapshot) => {
+      const total = snapshot.docs.reduce((acc, doc) => acc + (doc.data().total || 0), 0);
+      setStats(prev => ({ ...prev, pendingSalesTotal: total }));
+    });
+
+    const unsubPendingPurchases = onSnapshot(query(collection(db, 'purchases'), where('paymentStatus', '==', 'pending')), (snapshot) => {
+      const total = snapshot.docs.reduce((acc, doc) => acc + (doc.data().total || 0), 0);
+      setStats(prev => ({ ...prev, pendingPurchasesTotal: total }));
     });
 
     // Recent items
@@ -154,6 +167,8 @@ export default function Dashboard() {
       unsubExpensesToday();
       unsubSalesMonth();
       unsubExpensesMonth();
+      unsubPendingSales();
+      unsubPendingPurchases();
       unsubRecentSales();
       unsubRecentMovements();
     };
@@ -173,7 +188,7 @@ export default function Dashboard() {
         </div>
         <div className="flex items-center gap-2 text-[10px] bg-white dark:bg-slate-900 px-3 py-1.5 rounded-full shadow-sm border border-gray-100 dark:border-slate-800 w-fit">
           <span className="w-1.5 h-1.5 bg-success rounded-full animate-pulse" />
-          <span className="font-bold text-slate-500 dark:text-slate-400 uppercase tracking-tight">Sync Online</span>
+          <span className="font-bold text-slate-500 dark:text-slate-400 uppercase tracking-tight">Sincronizado</span>
         </div>
       </div>
 
@@ -198,7 +213,7 @@ export default function Dashboard() {
       </div>
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 px-2">
+      <div className="grid grid-cols-1 gap-4 px-2">
         <StatCard 
           title="Lucro Realizado" 
           value={formatCurrency(stats.monthlyProfit)} 
@@ -212,6 +227,20 @@ export default function Dashboard() {
           icon={TrendingUp} 
           color="bg-slate-800"
           trend="Lucro sobre receita"
+        />
+        <StatCard 
+          title="Vendas a Receber" 
+          value={formatCurrency(stats.pendingSalesTotal)} 
+          icon={Wallet} 
+          color="bg-danger"
+          trend="Pendentes de efetivação"
+        />
+        <StatCard 
+          title="Compras a Pagar" 
+          value={formatCurrency(stats.pendingPurchasesTotal)} 
+          icon={Clock} 
+          color="bg-slate-500"
+          trend="Notas pendentes"
         />
       </div>
 
@@ -229,8 +258,8 @@ export default function Dashboard() {
               <span className="text-[10px] font-black text-slate-600 dark:text-slate-400 uppercase">Faturamento (R$)</span>
             </div>
           </div>
-          <div className="h-[300px] w-full">
-            <ResponsiveContainer width="100%" height="100%">
+          <div className="h-[300px] w-full min-h-[300px]">
+            <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
               <BarChart data={chartData} margin={{ top: 10, right: 10, left: -25, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#334155" opacity={0.1} />
                 <XAxis 

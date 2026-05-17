@@ -300,16 +300,16 @@ export default function Products() {
                   <div className="flex gap-2 pt-2">
                     <button
                       onClick={() => navigate(`/produtos/editar/${selectedProduct.id}`)}
-                      className="flex-1 bg-primary dark:bg-white dark:text-primary text-white font-black py-4 rounded-2xl flex items-center justify-center gap-2 text-xs shadow-lg shadow-primary/20 dark:shadow-white/5 hover:scale-[1.02] transition-transform"
+                      className="w-14 h-14 bg-primary dark:bg-white dark:text-primary text-white font-black rounded-2xl flex items-center justify-center shadow-lg shadow-primary/20 dark:shadow-white/5 hover:scale-[1.02] transition-transform"
                     >
-                      <Edit2 className="w-4 h-4" /> Editar Informações
+                      <Edit2 className="w-5 h-5" />
                     </button>
                     {!confirmDelete ? (
                       <button
                         onClick={() => setConfirmDelete(selectedProduct.id)}
-                        className="w-16 bg-danger/10 text-danger hover:bg-danger hover:text-white transition-all rounded-2xl flex items-center justify-center shadow-sm"
+                        className="w-14 h-14 bg-danger/10 text-danger hover:bg-danger hover:text-white transition-all rounded-2xl flex items-center justify-center shadow-sm"
                       >
-                        <Trash2 className="w-5 h-5" />
+                        <Trash2 className="w-6 h-6" />
                       </button>
                     ) : (
                       <div className="flex gap-1">

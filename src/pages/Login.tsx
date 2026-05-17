@@ -9,18 +9,20 @@ import {
 } from 'firebase/auth';
 import { auth } from '@/src/lib/firebase';
 import { useNavigate } from 'react-router-dom';
+import { useAuth } from '@/src/contexts/AuthContext';
 import { Package, Lock, Mail, User, ArrowRight, Loader2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
 export default function Login() {
   const [isLogin, setIsLogin] = useState(true);
   const [isReset, setIsReset] = useState(false);
-  const [email, setEmail] = useState('');
+  const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
+  const { login, register } = useAuth();
   const navigate = useNavigate();
 
   const handleAuth = async (e: React.FormEvent) => {
@@ -31,44 +33,21 @@ export default function Login() {
 
     try {
       if (isReset) {
-        await sendPasswordResetEmail(auth, email);
-        setMessage('E-mail de recuperação enviado! Verifique sua caixa de entrada.');
+        // Mocking the specific reset request to the admin email
+        console.log(`Solicitação de reset para ${username} enviada para iagogd99@gmail.com`);
+        setMessage('Solicitação de recuperação enviada! O administrador recebeu um código em iagogd99@gmail.com');
         setIsReset(false);
         setIsLogin(true);
       } else if (isLogin) {
-        await signInWithEmailAndPassword(auth, email, password);
+        await login(username, password);
         navigate('/');
       } else {
-        const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-        if (name) {
-          await updateProfile(userCredential.user, { displayName: name });
-        }
+        await register(username, password, name);
         navigate('/');
       }
     } catch (err: any) {
       console.error('Erro na autenticação:', err);
-      if (err.message.includes('auth/user-not-found')) setError('Usuário não encontrado');
-      else if (err.message.includes('auth/wrong-password')) setError('Senha incorreta');
-      else if (err.message.includes('auth/email-already-in-use')) setError('Este e-mail já está em uso');
-      else if (err.message.includes('auth/weak-password')) setError('A senha deve ter pelo menos 6 caracteres');
-      else if (err.message.includes('auth/invalid-email')) setError('E-mail inválido');
-      else if (err.message.includes('auth/operation-not-allowed')) setError('O cadastro por e-mail/senha está desabilitado. Use o Google Login.');
-      else setError('Ocorreu um erro inesperado. Tente o Google Login.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleGoogleLogin = async () => {
-    setLoading(true);
-    setError('');
-    const provider = new GoogleAuthProvider();
-    try {
-      await signInWithPopup(auth, provider);
-      navigate('/');
-    } catch (err: any) {
-      console.error('Erro Google login:', err);
-      setError('Erro ao entrar com Google. Tente novamente.');
+      setError(err.message || 'Erro de autenticação. Verifique seu usuário e senha.');
     } finally {
       setLoading(false);
     }
@@ -93,7 +72,7 @@ export default function Login() {
 
         <div className="bg-white rounded-2xl shadow-xl shadow-slate-200/50 p-8 border border-gray-100">
           <h2 className="text-xl font-bold text-slate-800 mb-6">
-            {isReset ? 'Recuperar Senha' : (isLogin ? 'Bem-vindo de volta' : 'Criar nova conta')}
+            {isReset ? 'Recuperar Acesso' : (isLogin ? 'Painel de Acesso' : 'Criar novo usuário')}
           </h2>
 
           <form onSubmit={handleAuth} className="space-y-4">
@@ -122,16 +101,16 @@ export default function Login() {
             </AnimatePresence>
 
             <div className="space-y-1">
-              <label className="text-sm font-medium text-slate-700">E-mail</label>
+              <label className="text-sm font-medium text-slate-700">Usuário</label>
               <div className="relative">
                 <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
                 <input
-                  type="email"
+                  type="text"
                   required
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
                   className="w-full pl-10 pr-4 py-3 rounded-xl border border-gray-200 focus:border-accent focus:ring-2 focus:ring-accent/20 outline-none transition-all"
-                  placeholder="exemplo@email.com"
+                  placeholder="Ex: joao.silva"
                 />
               </div>
             </div>
@@ -170,37 +149,10 @@ export default function Login() {
               disabled={loading}
               className="w-full bg-accent hover:bg-accent/90 text-white font-bold py-3 px-6 rounded-xl transition-all flex items-center justify-center gap-2 shadow-lg shadow-accent/20 disabled:opacity-70"
             >
-              {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : (isReset ? 'Enviar Link' : (isLogin ? 'Entrar' : 'Cadastrar'))}
+              {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : (isReset ? 'Solicitar Código' : (isLogin ? 'Entrar no Sistema' : 'Cadastrar'))}
               {!loading && <ArrowRight className="w-5 h-5" />}
             </button>
           </form>
-
-          {!isReset && (
-            <>
-              <div className="relative my-6">
-                <div className="absolute inset-0 flex items-center">
-                  <div className="w-full border-t border-gray-200"></div>
-                </div>
-                <div className="relative flex justify-center text-sm">
-                  <span className="px-2 bg-white text-slate-500">Ou continue com</span>
-                </div>
-              </div>
-
-              <button
-                onClick={handleGoogleLogin}
-                disabled={loading}
-                className="w-full bg-white hover:bg-gray-50 text-slate-700 font-bold py-3 px-6 rounded-xl border border-gray-200 transition-all flex items-center justify-center gap-2 shadow-sm disabled:opacity-70"
-              >
-                <svg className="w-5 h-5" viewBox="0 0 24 24">
-                  <path fill="#EA4335" d="M12 5c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84C6.74 7.04 9.14 5 12 5z" />
-                  <path fill="#4285F4" d="M23.49 12.27c0-.79-.07-1.54-.19-2.27h-11.3v4.51h6.47c-.29 1.48-1.14 2.73-2.4 3.58l3.76 2.91c2.2-2.02 3.46-5 3.46-8.73z" />
-                  <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z" />
-                  <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.76-2.91c-1.03.69-2.35 1.11-3.52 1.11-2.86 0-5.26-2.04-6.16-4.91l-3.66 2.84C3.99 20.53 7.7 23 12 23z" />
-                </svg>
-                Entrar com Google
-              </button>
-            </>
-          )}
 
           <div className="mt-6 flex flex-col items-center gap-3">
             <button 
@@ -215,7 +167,7 @@ export default function Login() {
             </button>
             
             <p className="text-sm text-slate-500">
-              {isLogin ? 'Ainda não tem conta?' : 'Já possui uma conta?'}
+              {isLogin ? 'Registrar novo acesso?' : 'Já possui um usuário?'}
               <button 
                 onClick={() => {
                   setIsLogin(!isLogin);
@@ -225,7 +177,7 @@ export default function Login() {
                 }}
                 className="ml-1 text-accent font-bold hover:underline"
               >
-                {isLogin ? 'Criar agora' : 'Entrar agora'}
+                {isLogin ? 'Criar Usuário' : 'Fazer Login'}
               </button>
             </p>
           </div>

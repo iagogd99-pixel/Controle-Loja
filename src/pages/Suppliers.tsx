@@ -9,7 +9,9 @@ import {
   Phone,
   Mail,
   MapPin,
-  Building
+  Building,
+  Globe,
+  ExternalLink
 } from 'lucide-react';
 import { 
   collection, 
@@ -42,6 +44,7 @@ export default function Suppliers() {
     email: '',
     phone: '',
     cnpj: '',
+    website: '',
   });
 
   useEffect(() => {
@@ -99,6 +102,7 @@ export default function Suppliers() {
         email: supplier.email || '',
         phone: supplier.phone || '',
         cnpj: supplier.cnpj || '',
+        website: supplier.website || '',
       });
     } else {
       setEditingSupplier(null);
@@ -108,6 +112,7 @@ export default function Suppliers() {
         email: '',
         phone: '',
         cnpj: '',
+        website: '',
       });
     }
     setIsModalOpen(true);
@@ -224,19 +229,37 @@ export default function Suppliers() {
                 <InfoItem icon={Phone} label="WhatsApp / Telefone" value={selectedSupplier.phone || 'Não informado'} />
                 <InfoItem icon={Building} label="CNPJ / Documento" value={selectedSupplier.cnpj || 'Não informado'} />
                 <InfoItem icon={MapPin} label="Endereço Comercial" value={selectedSupplier.address || 'Não informado'} />
+                {selectedSupplier.website && (
+                  <div 
+                    onClick={() => {
+                        const url = selectedSupplier.website?.startsWith('http') ? selectedSupplier.website : `https://${selectedSupplier.website}`;
+                        window.open(url, '_blank');
+                    }}
+                    className="p-4 bg-primary/5 rounded-3xl border border-primary/10 cursor-pointer hover:bg-primary/10 transition-colors"
+                  >
+                    <div className="flex items-center gap-2 mb-1.5">
+                      <Globe className="w-3 h-3 text-primary" />
+                      <span className="text-[10px] font-black text-primary uppercase tracking-widest text-primary/60">Site Oficial</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <p className="text-xs font-black text-primary leading-tight truncate">{selectedSupplier.website}</p>
+                      <ExternalLink className="w-3 h-3 text-primary" />
+                    </div>
+                  </div>
+                )}
                 
-                <div className="pt-6 grid grid-cols-2 gap-2">
+                <div className="pt-6 flex gap-3">
                   <button
                     onClick={(e) => openForm(selectedSupplier, e)}
-                    className="py-4 bg-primary text-white font-black rounded-3xl flex items-center justify-center gap-2 text-xs shadow-lg shadow-primary/20 hover:scale-[1.02] transition-transform uppercase"
+                    className="w-16 h-16 bg-primary text-white font-black rounded-3xl flex items-center justify-center shadow-lg shadow-primary/20 hover:scale-[1.02] transition-transform uppercase"
                   >
-                    <Edit2 className="w-4 h-4" /> Editar
+                    <Edit2 className="w-5 h-5" />
                   </button>
                   <button
                     onClick={(e) => handleDelete(selectedSupplier.id, e)}
-                    className="py-4 bg-danger/10 text-danger font-black rounded-3xl flex items-center justify-center gap-2 text-xs hover:bg-danger hover:text-white transition-all uppercase"
+                    className="w-16 h-16 bg-danger/10 text-danger font-black rounded-3xl flex items-center justify-center hover:bg-danger hover:text-white transition-all uppercase"
                   >
-                    <Trash2 className="w-4 h-4" /> Excluir
+                    <Trash2 className="w-5 h-5" />
                   </button>
                 </div>
               </div>
@@ -280,6 +303,7 @@ export default function Suppliers() {
                   </div>
 
                   <FormInput label="CNPJ" value={formData.cnpj} onChange={(v) => setFormData({...formData, cnpj: v})} />
+                  <FormInput label="Site Website" placeholder="www.exemplo.com.br" value={formData.website} onChange={(v) => setFormData({...formData, website: v})} />
 
                   <div>
                     <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">Endereço Comercial</label>
@@ -320,7 +344,7 @@ function InfoItem({ icon: Icon, label, value }: any) {
   );
 }
 
-function FormInput({ label, type = "text", value, onChange }: any) {
+function FormInput({ label, type = "text", value, onChange, placeholder }: any) {
   return (
     <div>
       <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">{label}</label>
@@ -328,6 +352,7 @@ function FormInput({ label, type = "text", value, onChange }: any) {
         type={type} 
         value={value}
         onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
         className="w-full bg-slate-50 border-none rounded-2xl px-4 py-3 focus:ring-2 focus:ring-accent transition-all text-xs font-bold"
       />
     </div>
