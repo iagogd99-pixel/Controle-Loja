@@ -22,7 +22,7 @@ import {
   onSnapshot
 } from 'firebase/firestore';
 import { db } from '@/src/lib/firebase';
-import { formatCurrency, cn } from '@/src/lib/utils';
+import { formatCurrency, cn, getBrasiliaTime } from '@/src/lib/utils';
 import { Product, Sale, Movement } from '@/src/types';
 import { 
   BarChart, 
@@ -55,9 +55,11 @@ export default function Dashboard() {
   const [chartData, setChartData] = useState<any[]>([]);
 
   useEffect(() => {
-    const today = new Date();
+    const today = getBrasiliaTime();
     today.setHours(0,0,0,0);
-    const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+    const startOfMonth = getBrasiliaTime();
+    startOfMonth.setDate(1);
+    startOfMonth.setHours(0,0,0,0);
     
     const unsubSalesToday = onSnapshot(query(collection(db, 'sales'), where('timestamp', '>=', today.toISOString())), (snapshot) => {
       const sales = snapshot.docs.map(doc => doc.data() as Sale);
@@ -125,10 +127,10 @@ export default function Dashboard() {
     // Daily Sales Chart Data (Last 10 days)
     const last10DaysData = async () => {
       const data = [];
-      const now = new Date();
+      const now = getBrasiliaTime();
       
       // We'll fetch sales from the last 10 days to group them
-      const tenDaysAgo = new Date();
+      const tenDaysAgo = getBrasiliaTime();
       tenDaysAgo.setDate(tenDaysAgo.getDate() - 10);
       tenDaysAgo.setHours(0,0,0,0);
 
@@ -149,7 +151,7 @@ export default function Dashboard() {
       });
 
       for (let i = 9; i >= 0; i--) {
-        const d = new Date();
+        const d = getBrasiliaTime();
         d.setDate(d.getDate() - i);
         const dayLabel = d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
         

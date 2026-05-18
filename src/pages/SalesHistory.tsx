@@ -216,10 +216,8 @@ export default function SalesHistory() {
     };
 
     if (isAdmin) {
-      if (confirm(`Deseja realmente cancelar e estornar a venda #${sale.id.slice(-6).toUpperCase()}?`)) {
-        setPendingAction(() => action);
-        setShowPasswordPrompt(true);
-      }
+      setPendingAction(() => action);
+      setShowPasswordPrompt(true);
     } else {
       alert('Acesso restrito a administradores');
     }

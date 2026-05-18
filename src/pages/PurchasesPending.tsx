@@ -13,7 +13,9 @@ import {
   Loader2,
   Calendar,
   Trash2,
-  Edit2
+  Edit2,
+  Lock,
+  Pencil
 } from 'lucide-react';
 import { 
   collection, 
@@ -29,11 +31,12 @@ import {
   writeBatch,
   getDoc,
   getDocs,
-  increment
+  increment,
+  serverTimestamp
 } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '@/src/lib/firebase';
 import { Purchase } from '@/src/types';
-import { formatCurrency, cn } from '@/src/lib/utils';
+import { formatCurrency, cn, getBrasiliaISO, getBrasiliaTime } from '@/src/lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
 import { useAuth } from '@/src/contexts/AuthContext';
 import { format } from 'date-fns';
@@ -41,12 +44,32 @@ import { ptBR } from 'date-fns/locale';
 import { Link } from 'react-router-dom';
 
 export default function PurchasesPending() {
-  const { profile } = useAuth();
+  const { profile, isAdmin, verifyPassword } = useAuth();
   const [purchases, setPurchases] = useState<Purchase[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedPurchase, setSelectedPurchase] = useState<Purchase | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
+
+  // Password Verification State
+  const [showPasswordPrompt, setShowPasswordPrompt] = useState(false);
+  const [passwordInput, setPasswordInput] = useState('');
+  const [verifyingPassword, setVerifyingPassword] = useState(false);
+  const [pendingAction, setPendingAction] = useState<() => void>(() => {});
+
+  const confirmPassword = async () => {
+    setVerifyingPassword(true);
+    const isValid = await verifyPassword(passwordInput);
+    setVerifyingPassword(false);
+    
+    if (isValid) {
+      setShowPasswordPrompt(false);
+      setPasswordInput('');
+      pendingAction();
+    } else {
+      alert('Senha incorreta');
+    }
+  };
 
   useEffect(() => {
     const q = query(
@@ -85,14 +108,14 @@ export default function PurchasesPending() {
       const purchaseRef = doc(db, 'purchases', purchase.id);
       const updates: any = {
         paymentStatus: 'paid',
-        paidAt: new Date().toISOString()
+        paidAt: getBrasiliaISO()
       };
 
       if (purchase.installmentsList) {
         updates.installmentsList = purchase.installmentsList.map(i => ({
           ...i,
           status: 'paid',
-          paidAt: i.paidAt || new Date().toISOString()
+          paidAt: i.paidAt || getBrasiliaISO()
         }));
       }
 
@@ -108,7 +131,7 @@ export default function PurchasesPending() {
         userId: profile.uid,
         userName: profile.name,
         purchaseId: purchase.id,
-        timestamp: new Date().toISOString()
+        timestamp: getBrasiliaISO()
       });
 
       setSelectedPurchase(null);
@@ -131,7 +154,7 @@ export default function PurchasesPending() {
     setIsProcessing(true);
     try {
       const updatedInstallments = purchase.installmentsList?.map(i => 
-        i.id === installmentId ? { ...i, status: 'paid', paidAt: new Date().toISOString() } : i
+        i.id === installmentId ? { ...i, status: 'paid', paidAt: getBrasiliaISO() } : i
       );
 
       const allPaid = updatedInstallments?.every(i => i.status === 'paid');
@@ -140,7 +163,7 @@ export default function PurchasesPending() {
       await updateDoc(purchaseRef, {
         installmentsList: updatedInstallments,
         paymentStatus: allPaid ? 'paid' : 'pending',
-        paidAt: allPaid ? new Date().toISOString() : null
+        paidAt: allPaid ? getBrasiliaISO() : null
       });
 
       // Record Financial Movement
@@ -154,7 +177,7 @@ export default function PurchasesPending() {
         userName: profile.name,
         purchaseId: purchase.id,
         installmentId: installmentId,
-        timestamp: new Date().toISOString()
+        timestamp: getBrasiliaISO()
       });
 
       if (allPaid) {
@@ -179,58 +202,74 @@ export default function PurchasesPending() {
   const handleDelete = async (purchase: Purchase) => {
     if (!purchase?.id) return;
     
-    if (!confirm(`Deseja realmente excluir esta compra #${purchase.id.slice(-6).toUpperCase()}? O estoque será revertido automaticamente.`)) return;
-    
-    setIsProcessing(true);
-    try {
-      const batch = writeBatch(db);
+    const action = async () => {
+      setIsProcessing(true);
+      try {
+        const batch = writeBatch(db);
 
-      // 1. Revert product stock (Subtract what was added)
-      if (purchase.items && Array.isArray(purchase.items)) {
-        for (const item of purchase.items) {
-          const productRef = doc(db, 'products', item.productId);
-          try {
-            const productSnap = await getDoc(productRef);
-            if (productSnap.exists()) {
-              const updateData: any = {
-                stock: increment(-item.quantity)
-              };
+        // 1. Revert product stock (Subtract what was added)
+        if (purchase.items && Array.isArray(purchase.items)) {
+          for (const item of purchase.items) {
+            const productRef = doc(db, 'products', item.productId);
+            try {
+              const productSnap = await getDoc(productRef);
+              if (productSnap.exists()) {
+                const updateData: any = {
+                  stock: increment(-item.quantity)
+                };
 
-              if (item.size) {
-                updateData[`sizeStock.${item.size}`] = increment(-item.quantity);
+                if (item.size) {
+                  updateData[`sizeStock.${item.size}`] = increment(-item.quantity);
+                }
+
+                batch.update(productRef, updateData);
+
+                // Reversal movement record
+                const revMovRef = doc(collection(db, 'movements'));
+                batch.set(revMovRef, {
+                  productId: item.productId,
+                  productName: item.name + (item.size ? ` (${item.size})` : ''),
+                  type: 'out',
+                  quantity: item.quantity,
+                  reason: `Estorno Compra Excluída (Pendente) #${purchase.id.slice(-6).toUpperCase()}`,
+                  userId: profile?.uid || 'system',
+                  userName: profile?.name || 'Sistema',
+                  timestamp: serverTimestamp()
+                });
               }
-
-              batch.update(productRef, updateData);
+            } catch (e) {
+              console.warn(`Erro ao reverter produto ${item.productId}:`, e);
             }
-          } catch (e) {
-            console.warn(`Erro ao buscar produto ${item.productId}:`, e);
           }
         }
+
+        // 2. Delete linked movements
+        const movementsSnap = await getDocs(query(collection(db, 'movements'), where('purchaseId', '==', purchase.id)));
+        movementsSnap.docs.forEach(d => batch.delete(d.ref));
+
+        // 3. Delete linked cash movements
+        const cashMovementsSnap = await getDocs(query(collection(db, 'cash_movements'), where('purchaseId', '==', purchase.id)));
+        cashMovementsSnap.docs.forEach(d => batch.delete(d.ref));
+
+        // 4. Delete the purchase itself
+        batch.delete(doc(db, 'purchases', purchase.id));
+
+        await batch.commit();
+        setSelectedPurchase(null);
+        alert('Compra pendente excluída e estoque atualizado!');
+      } catch (error) {
+        console.error('Delete error:', error);
+        alert('Erro ao excluir compra');
+      } finally {
+        setIsProcessing(false);
       }
+    };
 
-      // 2. Delete linked movements (where purchaseId === purchase.id)
-      const movementsSnap = await getDocs(query(collection(db, 'movements'), where('purchaseId', '==', purchase.id)));
-      movementsSnap.docs.forEach(d => {
-        batch.delete(d.ref);
-      });
-
-      // 3. Delete linked cash movements (where purchaseId === purchase.id)
-      const cashMovementsSnap = await getDocs(query(collection(db, 'cash_movements'), where('purchaseId', '==', purchase.id)));
-      cashMovementsSnap.docs.forEach(d => {
-        batch.delete(d.ref);
-      });
-
-      // 4. Delete the purchase itself
-      batch.delete(doc(db, 'purchases', purchase.id));
-
-      await batch.commit();
-      setSelectedPurchase(null);
-      alert('Compra excluída e estoque revertido com sucesso!');
-    } catch (error) {
-      console.error('Error deleting purchase:', error);
-      alert('Erro ao excluir compra');
-    } finally {
-      setIsProcessing(false);
+    if (isAdmin) {
+      setPendingAction(() => action);
+      setShowPasswordPrompt(true);
+    } else {
+      alert('Acesso restrito a administradores');
     }
   };
 
@@ -277,25 +316,38 @@ export default function PurchasesPending() {
               key={purchase.id}
               layoutId={`purchase-${purchase.id}`}
               onClick={() => setSelectedPurchase(purchase)}
-              className="bg-white p-5 rounded-[32px] border border-gray-100 shadow-sm hover:shadow-md transition-all text-left flex flex-col group relative cursor-pointer"
+              className="bg-white p-4 rounded-[28px] border border-slate-100 shadow-sm hover:shadow-md transition-all text-left flex flex-col group relative cursor-pointer"
             >
-              <div className="flex items-center justify-between mb-4">
-                <div className="w-12 h-12 bg-slate-50 rounded-2xl flex items-center justify-center text-slate-400 group-hover:bg-danger/10 group-hover:text-danger transition-colors">
-                  <Truck className="w-6 h-6" />
+              <div className="flex items-center justify-between mb-3">
+                <div className="w-10 h-10 bg-slate-50 rounded-xl flex items-center justify-center text-slate-300 group-hover:bg-danger/5 group-hover:text-danger transition-colors">
+                  <Truck className="w-5 h-5" />
                 </div>
-                <span className="text-[10px] font-black bg-danger/10 text-danger px-2 py-1 rounded-lg uppercase tracking-wider">
-                  A Pagar
-                </span>
+                <div className="flex flex-col items-end">
+                   <span className="text-[8px] font-black bg-danger/10 text-danger px-2 py-0.5 rounded-lg uppercase tracking-wider mb-1">
+                    A Pagar
+                  </span>
+                  <span className="text-[8px] font-black text-slate-300 uppercase tracking-widest leading-none">
+                    #{purchase.id.slice(-6).toUpperCase()}
+                  </span>
+                </div>
               </div>
               
-              <div className="space-y-1">
-                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+              <div className="flex-1 min-w-0">
+                <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1 leading-none">
                    {format(date, "dd MMM yyyy", { locale: ptBR })}
                 </p>
-                <h3 className="text-sm font-black text-slate-800 line-clamp-1">{purchase.supplierName || 'Fornecedor Avulso'}</h3>
-                <div className="pt-2 border-t border-slate-50 mt-2 flex justify-between items-center">
-                  <span className="text-lg font-black text-danger">{formatCurrency(purchase.total)}</span>
-                  <span className="text-[8px] font-black text-slate-300 uppercase tracking-widest">{purchase.itemsCount} itens</span>
+                <h3 className="text-sm font-black text-slate-800 line-clamp-1 group-hover:text-primary transition-colors uppercase">
+                  {purchase.supplierName || 'Fornecedor Avulso'}
+                </h3>
+              </div>
+
+              <div className="pt-3 border-t border-slate-50 mt-3 flex justify-between items-end">
+                <div className="flex flex-col">
+                  <span className="text-[8px] font-black text-slate-300 uppercase tracking-widest mb-1 leading-none">Total</span>
+                  <span className="text-base font-black text-danger leading-none">{formatCurrency(purchase.total)}</span>
+                </div>
+                <div className="text-right">
+                  <span className="text-[8px] font-black text-slate-300 uppercase tracking-widest leading-none">{purchase.itemsCount} PRODS</span>
                 </div>
               </div>
 
@@ -305,26 +357,25 @@ export default function PurchasesPending() {
                     e.stopPropagation();
                     handleFinalize(purchase);
                   }}
-                  className="flex-1 py-2 bg-danger text-white text-[10px] font-black rounded-xl shadow-lg shadow-danger/20 transition-all uppercase tracking-widest"
+                  className="flex-1 py-3 bg-danger text-white text-[9px] font-black rounded-xl shadow-lg shadow-danger/20 transition-all uppercase tracking-widest hover:brightness-110 active:scale-95"
                 >
-                  Pagar Agora
+                  Confirmar Pagamento
                 </button>
                 <Link 
                   to={`/compras/nova?edit=${purchase.id}`}
                   onClick={(e) => e.stopPropagation()}
-                  className="w-10 h-10 flex items-center justify-center bg-slate-100 text-slate-400 rounded-xl transition-all hover:text-accent hover:bg-accent/5"
+                  className="w-10 h-10 flex items-center justify-center bg-slate-50 text-slate-400 rounded-xl hover:bg-accent/10 hover:text-accent transition-all"
                 >
-                  <Edit2 className="w-5 h-5" />
+                  <Pencil className="w-4 h-4" />
                 </Link>
                 <button 
                   onClick={(e) => {
                     e.stopPropagation();
                     handleDelete(purchase);
                   }}
-                  disabled={isProcessing}
-                  className="w-10 h-10 flex items-center justify-center bg-slate-100 text-slate-400 rounded-xl transition-all hover:text-danger hover:bg-danger/5 disabled:opacity-50"
+                  className="w-10 h-10 flex items-center justify-center bg-slate-50 text-slate-400 rounded-xl hover:bg-danger/10 hover:text-danger transition-all"
                 >
-                  <Trash2 className="w-5 h-5" />
+                  <Trash2 className="w-4 h-4" />
                 </button>
               </div>
             </motion.div>
@@ -492,6 +543,60 @@ export default function PurchasesPending() {
                   {isProcessing && <Loader2 className="w-5 h-5 animate-spin mr-2" />}
                   Confirmar Pagamento
                 </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+      {/* Password Verification Modal */}
+      <AnimatePresence>
+        {showPasswordPrompt && (
+          <div className="fixed inset-0 z-[120] flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowPasswordPrompt(false)}
+              className="absolute inset-0 bg-slate-900/60 backdrop-blur-md"
+            />
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-white rounded-[32px] shadow-2xl w-full max-w-xs overflow-hidden relative z-[121] p-8 text-center"
+            >
+              <div className="w-16 h-16 bg-accent/10 rounded-2xl flex items-center justify-center text-accent mx-auto mb-6">
+                <Lock className="w-8 h-8" />
+              </div>
+              <h2 className="text-xl font-black text-slate-800 uppercase tracking-tighter mb-2">Acesso Restrito</h2>
+              <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-6">Confirme sua senha de Admin para continuar</p>
+              
+              <div className="space-y-4">
+                <input 
+                  type="password"
+                  value={passwordInput}
+                  onChange={(e) => setPasswordInput(e.target.value)}
+                  placeholder="Sua senha..."
+                  className="w-full bg-slate-50 border-none rounded-2xl px-6 py-4 text-center font-bold outline-none focus:ring-2 focus:ring-accent/20 transition-all"
+                  autoFocus
+                  onKeyDown={(e) => e.key === 'Enter' && confirmPassword()}
+                />
+                
+                <div className="flex flex-col gap-2">
+                  <button 
+                    onClick={confirmPassword}
+                    disabled={verifyingPassword}
+                    className="w-full py-4 bg-accent text-white font-black rounded-2xl text-[10px] uppercase shadow-lg shadow-accent/20 transition-all hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50"
+                  >
+                    {verifyingPassword ? 'Verificando...' : 'Confirmar Acesso'}
+                  </button>
+                  <button 
+                    onClick={() => setShowPasswordPrompt(false)}
+                    className="w-full py-4 bg-slate-50 text-slate-400 font-black rounded-2xl text-[10px] uppercase"
+                  >
+                    Cancelar
+                  </button>
+                </div>
               </div>
             </motion.div>
           </div>

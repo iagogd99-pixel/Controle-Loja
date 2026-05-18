@@ -16,7 +16,7 @@ import {
 } from 'lucide-react';
 import { collection, getDocs, query, where, orderBy } from 'firebase/firestore';
 import { db } from '@/src/lib/firebase';
-import { formatCurrency, formatDate, cn } from '@/src/lib/utils';
+import { formatCurrency, formatDate, cn, getBrasiliaTime } from '@/src/lib/utils';
 import { Sale, Product, Movement } from '@/src/types';
 import { jsPDF } from 'jspdf';
 import * as XLSX from 'xlsx';
@@ -41,17 +41,22 @@ export default function Reports() {
   }, []);
 
   const getFilteredSales = () => {
-    const now = new Date();
+    const now = getBrasiliaTime();
     if (timeFilter === '7d') {
-      const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+      const sevenDaysAgo = getBrasiliaTime();
+      sevenDaysAgo.setTime(now.getTime() - 7 * 24 * 60 * 60 * 1000);
       return sales.filter(s => new Date(s.timestamp) >= sevenDaysAgo);
     }
     if (timeFilter === '30d') {
-      const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+      const thirtyDaysAgo = getBrasiliaTime();
+      thirtyDaysAgo.setTime(now.getTime() - 30 * 24 * 60 * 60 * 1000);
       return sales.filter(s => new Date(s.timestamp) >= thirtyDaysAgo);
     }
     if (timeFilter === 'month') {
-      return sales.filter(s => new Date(s.timestamp).getMonth() === now.getMonth() && new Date(s.timestamp).getFullYear() === now.getFullYear());
+      return sales.filter(s => {
+        const saleDate = new Date(s.timestamp);
+        return saleDate.getMonth() === now.getMonth() && saleDate.getFullYear() === now.getFullYear();
+      });
     }
     return sales;
   };
@@ -85,7 +90,7 @@ export default function Reports() {
     })));
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Vendas");
-    XLSX.writeFile(wb, `Relatorio_Vendas_${timeFilter}_${new Date().toISOString().split('T')[0]}.xlsx`);
+    XLSX.writeFile(wb, `Relatorio_Vendas_${timeFilter}_${getBrasiliaTime().toISOString().split('T')[0]}.xlsx`);
     setIsExporting(false);
   };
 
@@ -95,7 +100,7 @@ export default function Reports() {
     doc.setFontSize(20);
     doc.text('Relatório de Vendas - EstoquePro', 14, 22);
     doc.setFontSize(10);
-    doc.text(`Período: ${timeFilter.toUpperCase()} | Gerado em: ${new Date().toLocaleString('pt-BR')}`, 14, 30);
+    doc.text(`Período: ${timeFilter.toUpperCase()} | Gerado em: ${getBrasiliaTime().toLocaleString('pt-BR')}`, 14, 30);
 
     let y = 40;
     doc.line(14, y, 196, y);
@@ -107,7 +112,7 @@ export default function Reports() {
       if (y > 280) { doc.addPage(); y = 20; }
     });
 
-    doc.save(`Relatorio_Vendas_${timeFilter}_${new Date().toISOString().split('T')[0]}.pdf`);
+    doc.save(`Relatorio_Vendas_${timeFilter}_${getBrasiliaTime().toISOString().split('T')[0]}.pdf`);
     setIsExporting(false);
   };
 

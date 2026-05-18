@@ -25,7 +25,8 @@ import {
   writeBatch,
   getDoc,
   getDocs,
-  increment
+  increment,
+  serverTimestamp
 } from 'firebase/firestore';
 import { db } from '@/src/lib/firebase';
 import { Purchase } from '@/src/types';
@@ -43,6 +44,7 @@ export default function Purchases() {
   const [purchases, setPurchases] = useState<Purchase[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
+  const [isDeleting, setIsDeleting] = useState(false);
 
   // Password Verification State
   const [showPasswordPrompt, setShowPasswordPrompt] = useState(false);
@@ -97,8 +99,8 @@ export default function Purchases() {
 
   const handleDelete = async (purchase: Purchase) => {
     const action = async () => {
+      setIsDeleting(true);
       try {
-        setLoading(true);
         const batch = writeBatch(db);
 
         // 1. Revert product stock (Subtract what was added)
@@ -117,43 +119,51 @@ export default function Purchases() {
                 }
 
                 batch.update(productRef, updateData);
+                
+                // Add a reversal movement record
+                const revMovRef = doc(collection(db, 'movements'));
+                batch.set(revMovRef, {
+                  productId: item.productId,
+                  productName: item.name + (item.size ? ` (${item.size})` : ''),
+                  type: 'out',
+                  quantity: item.quantity,
+                  reason: `Estorno Compra Excluída #${purchase.id.slice(-6).toUpperCase()}`,
+                  userId: profile?.uid || 'system',
+                  userName: profile?.name || 'Sistema',
+                  timestamp: serverTimestamp()
+                });
               }
             } catch (e) {
-              console.warn(`Erro ao buscar produto ${item.productId}:`, e);
+              console.warn(`Erro ao reverter produto ${item.productId}:`, e);
             }
           }
         }
 
-        // 2. Delete linked movements (where purchaseId === purchase.id)
+        // 2. Clear old movements tied to this purchase to keep history clean 
+        // (Optional: some prefer keeping the 'out' movement I just added above as the only trace)
         const movementsSnap = await getDocs(query(collection(db, 'movements'), where('purchaseId', '==', purchase.id)));
-        movementsSnap.docs.forEach(d => {
-          batch.delete(d.ref);
-        });
+        movementsSnap.docs.forEach(d => batch.delete(d.ref));
 
-        // 3. Delete linked cash movements (where purchaseId === purchase.id)
+        // 3. Delete cash movements
         const cashMovementsSnap = await getDocs(query(collection(db, 'cash_movements'), where('purchaseId', '==', purchase.id)));
-        cashMovementsSnap.docs.forEach(d => {
-          batch.delete(d.ref);
-        });
+        cashMovementsSnap.docs.forEach(d => batch.delete(d.ref));
 
-        // 4. Delete the purchase itself
+        // 4. Delete purchase
         batch.delete(doc(db, 'purchases', purchase.id));
 
         await batch.commit();
-        alert('Compra excluída e estoque revertido com sucesso!');
+        alert('Compra excluída e estoque atualizado com sucesso!');
       } catch (error) {
-        console.error(error);
-        alert('Erro ao excluir compra');
+        console.error('Delete error:', error);
+        alert('Erro ao excluir compra. Verifique sua conexão.');
       } finally {
-        setLoading(false);
+        setIsDeleting(false);
       }
     };
 
     if (isAdmin) {
-      if (confirm(`Deseja realmente excluir esta compra #${purchase.id.slice(-6).toUpperCase()}? O estoque será revertido automaticamente.`)) {
-        setPendingAction(() => action);
-        setShowPasswordPrompt(true);
-      }
+      setPendingAction(() => action);
+      setShowPasswordPrompt(true);
     } else {
       alert('Acesso restrito a administradores');
     }
@@ -206,58 +216,58 @@ export default function Purchases() {
                 key={purchase.id}
                 className="bg-white p-6 rounded-[28px] border border-slate-100 shadow-sm hover:shadow-md hover:border-accent/20 transition-all group"
               >
-                <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
-                  <div className="flex items-center gap-5">
-                    <div className="w-14 h-14 bg-slate-50 rounded-2xl flex items-center justify-center text-slate-300 group-hover:bg-primary/5 group-hover:text-primary transition-all">
-                      <FileText className="w-7 h-7" />
-                    </div>
-                    <div>
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className="text-[10px] font-black text-white px-2 py-0.5 bg-slate-800 rounded-lg">
-                          #{purchase.id.slice(-6).toUpperCase()}
-                        </span>
-                        <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                          {format(date, "dd MMM yyyy, HH:mm", { locale: ptBR })}
-                        </span>
+                  <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
+                    <div className="flex items-center gap-4">
+                      <div className="w-12 h-12 bg-slate-50 rounded-2xl flex items-center justify-center text-slate-300 group-hover:bg-primary/5 group-hover:text-primary transition-all flex-shrink-0">
+                        <FileText className="w-6 h-6" />
                       </div>
-                      <h3 className="text-lg font-black text-primary truncate max-w-[200px] md:max-w-md">
-                        {purchase.supplierName || 'Fornecedor Avulso'}
-                      </h3>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2 mb-1 overflow-x-auto no-scrollbar">
+                          <span className="text-[9px] font-black text-white px-2 py-0.5 bg-slate-800 rounded-lg flex-shrink-0">
+                            #{purchase.id.slice(-6).toUpperCase()}
+                          </span>
+                          <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest flex-shrink-0">
+                            {format(date, "dd MMM yyyy, HH:mm", { locale: ptBR })}
+                          </span>
+                        </div>
+                        <h3 className="text-base font-black text-primary truncate max-w-[200px] md:max-w-md">
+                          {purchase.supplierName || 'Fornecedor Avulso'}
+                        </h3>
+                      </div>
                     </div>
-                  </div>
 
-                  <div className="flex items-center justify-between md:justify-end gap-8 pl-14 md:pl-0">
-                    <div className="text-left md:text-right">
-                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Itens</p>
-                      <p className="text-sm font-black text-slate-600">{purchase.itemsCount} produtos</p>
-                    </div>
-                    <div className="text-right">
-                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Pagamento</p>
-                      <p className="text-sm font-black text-slate-600 uppercase tracking-[0.2em] text-[10px]">
-                        {(purchase as any).paymentMethod || 'Dinheiro'}
-                        {(purchase as any).installments > 1 ? ` (${(purchase as any).installments}x)` : ''}
-                      </p>
-                    </div>
-                    <div className="text-right">
-                      <p className="text-[10px] font-black text-accent uppercase tracking-widest mb-1">Total Pago</p>
-                      <p className="text-xl font-black text-primary">{formatCurrency(purchase.total)}</p>
-                    </div>
-                    <div className="flex gap-2">
-                       <button 
-                        onClick={() => handleEditClick(purchase.id)}
-                        className="w-12 h-12 flex items-center justify-center bg-slate-50 text-slate-300 rounded-xl hover:bg-accent/10 hover:text-accent transition-all"
-                      >
-                        <Pencil className="w-5 h-5" />
-                      </button>
-                      <button 
-                        onClick={() => handleDelete(purchase)}
-                        className="w-12 h-12 flex items-center justify-center bg-slate-50 text-slate-300 rounded-xl hover:bg-danger/10 hover:text-danger transition-all"
-                      >
-                        <Trash2 className="w-5 h-5" />
-                      </button>
+                    <div className="grid grid-cols-2 md:grid-cols-4 items-center gap-4 lg:gap-8 pt-4 lg:pt-0 border-t lg:border-none border-slate-50">
+                      <div className="text-left">
+                        <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Itens</p>
+                        <p className="text-xs font-black text-slate-600">{purchase.itemsCount} PRODS</p>
+                      </div>
+                      <div className="text-left">
+                        <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">PAGTO</p>
+                        <p className="text-[9px] font-black text-slate-600 uppercase tracking-widest truncate">
+                          {(purchase as any).paymentMethod || 'Dinheiro'}
+                          {(purchase as any).installments > 1 ? ` (${(purchase as any).installments}x)` : ''}
+                        </p>
+                      </div>
+                      <div className="text-left lg:text-right">
+                        <p className="text-[9px] font-black text-accent uppercase tracking-widest mb-1 leading-none">TOTAL PAGO</p>
+                        <p className="text-base font-black text-primary leading-none mt-1">{formatCurrency(purchase.total)}</p>
+                      </div>
+                      <div className="flex justify-end gap-2">
+                         <button 
+                          onClick={() => handleEditClick(purchase.id)}
+                          className="w-10 h-10 flex items-center justify-center bg-slate-50 text-slate-400 rounded-xl hover:bg-accent/10 hover:text-accent transition-all"
+                        >
+                          <Pencil className="w-4 h-4" />
+                        </button>
+                        <button 
+                          onClick={() => handleDelete(purchase)}
+                          className="w-10 h-10 flex items-center justify-center bg-slate-50 text-slate-400 rounded-xl hover:bg-danger/10 hover:text-danger transition-all"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
                     </div>
                   </div>
-                </div>
               </motion.div>
             );
           })}

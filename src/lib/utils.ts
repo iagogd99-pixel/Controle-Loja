@@ -1,8 +1,21 @@
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
+import { toZonedTime, format } from 'date-fns-tz';
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
+}
+
+const BR_TIMEZONE = 'America/Sao_Paulo';
+
+export function getBrasiliaTime() {
+  return toZonedTime(new Date(), BR_TIMEZONE);
+}
+
+export function getBrasiliaISO() {
+  const now = new Date();
+  const zonedDate = toZonedTime(now, BR_TIMEZONE);
+  return format(zonedDate, "yyyy-MM-dd'T'HH:mm:ss.SSSxxx", { timeZone: BR_TIMEZONE });
 }
 
 export function formatCurrency(value: number) {

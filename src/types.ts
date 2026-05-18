@@ -81,7 +81,6 @@ export interface SaleItem {
   costPrice: number; // Added to track profit
   quantity: number;
   total: number;
-  image?: string;
 }
 
 export interface Sale {

@@ -24,7 +24,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '@/src/lib/firebase';
 import { Product } from '@/src/types';
-import { cn, sortSizes } from '@/src/lib/utils';
+import { cn, sortSizes, getBrasiliaISO } from '@/src/lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -133,7 +133,7 @@ export default function ProductForm() {
         sizes: selectedSizes,
         sizeStock,
         images,
-        updatedAt: new Date().toISOString(),
+        updatedAt: getBrasiliaISO(),
       };
 
       let newId = id;
@@ -142,7 +142,7 @@ export default function ProductForm() {
       } else {
         const docRef = await addDoc(collection(db, 'products'), {
           ...payload,
-          createdAt: new Date().toISOString(),
+          createdAt: getBrasiliaISO(),
         });
         newId = docRef.id;
       }

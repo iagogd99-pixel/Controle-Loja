@@ -17,7 +17,7 @@ import {
 import { collection, query, onSnapshot, doc, updateDoc, deleteDoc, getDoc, setDoc } from 'firebase/firestore';
 import { db } from '@/src/lib/firebase';
 import { UserProfile, UserRole } from '@/src/types';
-import { formatDate, cn } from '@/src/lib/utils';
+import { formatDate, cn, getBrasiliaISO } from '@/src/lib/utils';
 import { useAuth } from '@/src/contexts/AuthContext';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -81,7 +81,7 @@ export default function Users() {
         role: formData.role,
         status: 'active',
         password: formData.password,
-        createdAt: new Date().toISOString(),
+        createdAt: getBrasiliaISO(),
       };
 
       await setDoc(userRef, newProfile);

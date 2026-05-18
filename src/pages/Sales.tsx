@@ -31,7 +31,8 @@ import {
 import { db } from '@/src/lib/firebase';
 import { useAuth } from '@/src/contexts/AuthContext';
 import { Product, SaleItem, Client } from '@/src/types';
-import { formatCurrency, cn, getProductSku, sortSizes } from '@/src/lib/utils';
+import { formatCurrency, cn, getProductSku, sortSizes, getBrasiliaTime, getBrasiliaISO } from '@/src/lib/utils';
+import { format } from 'date-fns-tz';
 import { motion, AnimatePresence } from 'motion/react';
 import { useNavigate } from 'react-router-dom';
 
@@ -110,8 +111,7 @@ export default function Sales() {
         price: product.salePrice, 
         costPrice: product.costPrice || 0,
         quantity: quantity, 
-        total: product.salePrice * quantity,
-        image: product.images?.[0]
+        total: product.salePrice * quantity
       }];
     });
     setSelectedProduct(null);
@@ -153,12 +153,12 @@ export default function Sales() {
       if (paymentStatus === 'pending') {
         const partAmount = cartTotal / numInstallments;
         for (let i = 1; i <= numInstallments; i++) {
-          const dueDate = new Date();
+          const dueDate = getBrasiliaTime();
           dueDate.setMonth(dueDate.getMonth() + i);
           installmentsList.push({
             id: i,
             amount: Number(partAmount.toFixed(2)),
-            dueDate: dueDate.toISOString(),
+            dueDate: format(dueDate, "yyyy-MM-dd'T'HH:mm:ss.SSSxxx", { timeZone: 'America/Sao_Paulo' }),
             status: 'pending'
           });
         }
@@ -180,7 +180,7 @@ export default function Sales() {
         customerName: finalCustomerName,
         userId: profile.uid,
         userName: profile.name,
-        timestamp: new Date().toISOString(),
+        timestamp: getBrasiliaISO(),
         status: 'completed'
       } as any;
       
@@ -201,7 +201,7 @@ export default function Sales() {
           userId: profile.uid,
           userName: profile.name,
           saleId: saleId,
-          timestamp: new Date().toISOString()
+          timestamp: getBrasiliaISO()
         });
       }
 
@@ -229,7 +229,7 @@ export default function Sales() {
           saleId: saleId,
           userId: profile.uid,
           userName: profile.name,
-          timestamp: new Date().toISOString()
+          timestamp: getBrasiliaISO()
         });
       }
 
@@ -507,24 +507,27 @@ export default function Sales() {
         <div className="flex-1 overflow-y-auto p-4 max-h-[400px]">
           <AnimatePresence mode="popLayout">
             <div className="space-y-3">
-              {cart.map(item => (
-                <motion.div 
-                  layout
-                  key={item.productId}
-                  initial={{ opacity: 0, x: -20 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  exit={{ opacity: 0, x: -20 }}
-                  className="bg-slate-50 border border-slate-100 rounded-[24px] p-3 flex items-center gap-4 group relative"
-                >
-                  <div className="w-16 h-16 bg-white rounded-2xl overflow-hidden flex-shrink-0 relative">
-                    {item.image ? (
-                      <img src={item.image} alt={item.name} className="w-full h-full object-cover" />
-                    ) : (
-                      <div className="w-full h-full flex items-center justify-center opacity-10">
-                        <Package className="w-8 h-8" />
-                      </div>
-                    )}
-                  </div>
+              {cart.map(item => {
+                const product = products.find(p => p.id === item.productId);
+                const productImage = product?.images?.[0];
+                return (
+                  <motion.div 
+                    layout
+                    key={item.productId}
+                    initial={{ opacity: 0, x: -20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: -20 }}
+                    className="bg-slate-50 border border-slate-100 rounded-[24px] p-3 flex items-center gap-4 group relative"
+                  >
+                    <div className="w-16 h-16 bg-white rounded-2xl overflow-hidden flex-shrink-0 relative">
+                      {productImage ? (
+                        <img src={productImage} alt={item.name} className="w-full h-full object-cover" />
+                      ) : (
+                        <div className="w-full h-full flex items-center justify-center opacity-10">
+                          <Package className="w-8 h-8" />
+                        </div>
+                      )}
+                    </div>
 
                   <div className="flex-1 min-w-0">
                     <p className="text-xs font-black text-slate-800 uppercase leading-tight truncate">
@@ -563,8 +566,9 @@ export default function Sales() {
                     </button>
                   </div>
                 </motion.div>
-              ))}
-            </div>
+              );
+            })}
+          </div>
           </AnimatePresence>
           {cart.length === 0 && (
             <div className="py-12 flex flex-col items-center justify-center text-slate-400 opacity-30">

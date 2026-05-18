@@ -32,7 +32,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '@/src/lib/firebase';
 import { Sale } from '@/src/types';
-import { formatCurrency, formatDate, cn } from '@/src/lib/utils';
+import { formatCurrency, formatDate, cn, getBrasiliaISO, getBrasiliaTime } from '@/src/lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
 import { useAuth } from '@/src/contexts/AuthContext';
 import { format } from 'date-fns';
@@ -87,14 +87,14 @@ export default function SalesPending() {
       const saleRef = doc(db, 'sales', sale.id);
       const updates: any = {
         paymentStatus: 'paid',
-        finalizedAt: new Date().toISOString()
+        finalizedAt: getBrasiliaISO()
       };
 
       if (sale.installmentsList) {
         updates.installmentsList = sale.installmentsList.map(i => ({
           ...i,
           status: 'paid',
-          paidAt: i.paidAt || new Date().toISOString()
+          paidAt: i.paidAt || getBrasiliaISO()
         }));
       }
 
@@ -118,7 +118,7 @@ export default function SalesPending() {
         userId: profile.uid,
         userName: profile.name,
         saleId: sale.id,
-        timestamp: new Date().toISOString()
+        timestamp: getBrasiliaISO()
       });
 
       setSelectedSale(null);
@@ -141,7 +141,7 @@ export default function SalesPending() {
     setIsProcessing(true);
     try {
       const updatedInstallments = sale.installmentsList?.map(i => 
-        i.id === installmentId ? { ...i, status: 'paid', paidAt: new Date().toISOString() } : i
+        i.id === installmentId ? { ...i, status: 'paid', paidAt: getBrasiliaISO() } : i
       );
 
       const allPaid = updatedInstallments?.every(i => i.status === 'paid');
@@ -150,7 +150,7 @@ export default function SalesPending() {
       await updateDoc(saleRef, {
         installmentsList: updatedInstallments,
         paymentStatus: allPaid ? 'paid' : 'pending',
-        finalizedAt: allPaid ? new Date().toISOString() : null
+        finalizedAt: allPaid ? getBrasiliaISO() : null
       });
 
       // Record Financial Movement
@@ -168,7 +168,7 @@ export default function SalesPending() {
         userName: profile.name,
         saleId: sale.id,
         installmentId: installmentId,
-        timestamp: new Date().toISOString()
+        timestamp: getBrasiliaISO()
       });
 
       if (allPaid) {
@@ -251,12 +251,16 @@ export default function SalesPending() {
     
     let matchesDate = true;
     if (filters.startDate) {
-      const start = new Date(filters.startDate);
+      const start = getBrasiliaTime();
+      const [y, m, d] = filters.startDate.split('-').map(Number);
+      start.setFullYear(y, m - 1, d);
       start.setHours(0, 0, 0, 0);
       matchesDate = matchesDate && saleDate >= start;
     }
     if (filters.endDate) {
-      const end = new Date(filters.endDate);
+      const end = getBrasiliaTime();
+      const [y, m, d] = filters.endDate.split('-').map(Number);
+      end.setFullYear(y, m - 1, d);
       end.setHours(23, 59, 59, 999);
       matchesDate = matchesDate && saleDate <= end;
     }

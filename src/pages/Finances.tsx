@@ -37,7 +37,7 @@ import {
 } from 'firebase/firestore';
 import { db, auth } from '@/src/lib/firebase';
 import { useAuth } from '@/src/contexts/AuthContext';
-import { cn, formatCurrency } from '@/src/lib/utils';
+import { cn, formatCurrency, getBrasiliaISO, getBrasiliaTime } from '@/src/lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -200,24 +200,13 @@ export default function Finances() {
       limit(50)
     );
 
-    const unsubMovements = onSnapshot(qMovements, async (snapshot) => {
+    const unsubMovements = onSnapshot(qMovements, (snapshot) => {
       const docs = snapshot.docs.map(doc_ => ({
         id: doc_.id,
         ...doc_.data()
       })) as Movement[];
       setMovements(docs);
 
-      // Recalculate stats using ALL movements from current session
-      const sessStartIso = (activeSession.openedAt instanceof Timestamp ? activeSession.openedAt.toDate() : new Date(activeSession.openedAt)).toISOString();
-      
-      // We fetch all current session movements to ensure stats are accurate
-      const qAllSessionMovements = query(
-        collection(db, 'cash_movements'),
-        where('timestamp', '>=', sessStartIso)
-      );
-      
-      const allMovementsSnap = await getDocs(qAllSessionMovements);
-      
       let salesSum = 0;
       let withSum = 0;
       let supSum = 0;
@@ -225,8 +214,7 @@ export default function Finances() {
       let pixSum = 0;
       let cardSum = 0;
 
-      allMovementsSnap.forEach(d => {
-        const m = d.data() as Movement;
+      docs.forEach(m => {
         if (m.type === 'in') {
            if (m.category === 'venda') salesSum += m.amount;
            if (m.category === 'suprimento') supSum += m.amount;
@@ -253,7 +241,7 @@ export default function Finances() {
     });
 
     // Fetch Profit for Today (Sales items items: price - costPrice)
-    const sessStartStr = (activeSession.openedAt instanceof Timestamp ? activeSession.openedAt.toDate() : new Date(activeSession.openedAt)).toISOString();
+    const sessStartStr = (activeSession.openedAt instanceof Timestamp ? activeSession.openedAt.toDate() : getBrasiliaTime()).toISOString();
     const qSales = query(collection(db, 'sales'), where('timestamp', '>=', sessStartStr), where('status', '==', 'completed'));
     
     const unsubSales = onSnapshot(qSales, (snapshot) => {
@@ -313,7 +301,7 @@ export default function Finances() {
         reason: withdrawalReason || 'Sangria de Caixa',
         userId: profile.uid,
         userName: profile.name,
-        timestamp: new Date().toISOString()
+        timestamp: getBrasiliaISO()
       });
       setShowWithdrawalModal(false);
       setWithdrawalAmount('');
@@ -339,7 +327,7 @@ export default function Finances() {
         reason: supplyReason || 'Suprimento de Caixa',
         userId: profile.uid,
         userName: profile.name,
-        timestamp: new Date().toISOString()
+        timestamp: getBrasiliaISO()
       });
       setShowSupplyModal(false);
       setSupplyAmount('');
@@ -482,7 +470,7 @@ export default function Finances() {
                         const action = async () => {
                           try {
                             setSubmittingStats(true);
-                            const sessStartIso = (activeSession.openedAt instanceof Timestamp ? activeSession.openedAt.toDate() : new Date(activeSession.openedAt)).toISOString();
+                            const sessStartIso = (activeSession.openedAt instanceof Timestamp ? activeSession.openedAt.toDate() : getBrasiliaTime()).toISOString();
                             const q = query(
                               collection(db, 'cash_movements'), 
                               where('timestamp', '>=', sessStartIso),

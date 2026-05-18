@@ -24,6 +24,7 @@ import {
   doc 
 } from 'firebase/firestore';
 import { db } from '@/src/lib/firebase';
+import { getBrasiliaISO } from '@/src/lib/utils';
 import { Client } from '@/src/types';
 import { motion, AnimatePresence } from 'motion/react';
 import { useAuth } from '@/src/contexts/AuthContext';
@@ -64,7 +65,7 @@ export default function Clients() {
       } else {
         await addDoc(collection(db, 'clients'), {
           ...formData,
-          createdAt: new Date().toISOString(),
+          createdAt: getBrasiliaISO(),
         });
       }
       closeModal();

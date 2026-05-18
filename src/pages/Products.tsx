@@ -27,7 +27,7 @@ import {
 } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '@/src/lib/firebase';
 import { Product, Movement } from '@/src/types';
-import { formatCurrency, cn, getProductSku, sortSizes } from '@/src/lib/utils';
+import { formatCurrency, cn, getProductSku, sortSizes, getBrasiliaTime } from '@/src/lib/utils';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -78,7 +78,7 @@ export default function Products() {
   }, []);
 
   useEffect(() => {
-    const sevenDaysAgo = new Date();
+    const sevenDaysAgo = getBrasiliaTime();
     sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
     
     const q = query(
