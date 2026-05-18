@@ -75,18 +75,24 @@ export default function Sales() {
   );
 
   const addToCart = (product: Product, size?: string, quantity: number = 1) => {
-    if (product.stock <= 0) return;
-    
-    // If product has multiple sizes and none selected, we'll handle that in UI
-    // But for safety, we fallback to product.size or none
     const finalSize = size || product.size;
     const itemSku = getProductSku(product.sku, finalSize);
     const cartItemId = `${product.id}-${finalSize || 'no-size'}`;
+
+    // Check stock for specific size if provided, otherwise total stock
+    const currentStock = (finalSize && product.sizeStock && product.sizeStock[finalSize] !== undefined)
+      ? product.sizeStock[finalSize]
+      : product.stock;
+
+    if (currentStock <= 0) {
+      alert('Produto sem estoque' + (finalSize ? ` para o tamanho ${finalSize}` : ''));
+      return;
+    }
     
     setCart(prev => {
       const existing = prev.find(item => `${item.productId}-${item.size || 'no-size'}` === cartItemId);
       if (existing) {
-        if (existing.quantity + quantity > product.stock) {
+        if (existing.quantity + quantity > currentStock) {
           alert('Limite de estoque atingido');
           return prev;
         }
@@ -114,10 +120,15 @@ export default function Sales() {
   const updateQuantity = (productId: string, size: string | undefined, delta: number) => {
     const cartItemId = `${productId}-${size || 'no-size'}`;
     setCart(prev => prev.map(item => {
-      if (`${item.productId}-${(item as any).size || 'no-size'}` === cartItemId) {
+      if (`${item.productId}-${item.size || 'no-size'}` === cartItemId) {
         const newQty = Math.max(0, item.quantity + delta);
         const product = products.find(p => p.id === productId);
-        if (product && newQty > product.stock) return item;
+        if (product) {
+          const currentStock = (size && product.sizeStock && product.sizeStock[size] !== undefined)
+            ? product.sizeStock[size]
+            : product.stock;
+          if (newQty > currentStock) return item;
+        }
         return { ...item, quantity: newQty, total: newQty * item.price };
       }
       return item;
@@ -196,17 +207,26 @@ export default function Sales() {
 
       // 2. Update Stock
       for (const item of cart) {
-        await updateDoc(doc(db, 'products', item.productId), {
+        const product = products.find(p => p.id === item.productId);
+        const updateData: any = {
           stock: increment(-item.quantity)
-        });
+        };
+
+        // Also update size-specific stock if it exists
+        if (item.size && product?.sizeStock && product.sizeStock[item.size] !== undefined) {
+          updateData[`sizeStock.${item.size}`] = increment(-item.quantity);
+        }
+
+        await updateDoc(doc(db, 'products', item.productId), updateData);
         
         // 3. Record Movement
         await addDoc(collection(db, 'movements'), {
           productId: item.productId,
-          productName: item.name,
+          productName: item.name + (item.size ? ` (Tamanho: ${item.size})` : ''),
           type: 'out',
           quantity: item.quantity,
           reason: 'Venda ' + (finalCustomerName ? `(Cliente: ${finalCustomerName})` : ''),
+          saleId: saleId,
           userId: profile.uid,
           userName: profile.name,
           timestamp: new Date().toISOString()
@@ -330,11 +350,20 @@ export default function Sales() {
                         <div className="flex-1 min-w-0">
                           <p className="text-sm font-black text-slate-800 leading-tight uppercase truncate">{product.name}</p>
                           <div className="flex flex-wrap gap-1 mt-1">
-                            {sortSizes(product.sizes || (product.size ? [product.size] : [])).map(size => (
-                              <span key={size} className="px-1.5 py-0.5 bg-slate-100 text-[8px] font-bold text-slate-500 rounded uppercase">
-                                {size}
-                              </span>
-                            ))}
+                            {sortSizes(product.sizes || (product.size ? [product.size] : [])).map(size => {
+                              const sizeStockValue = product.sizeStock?.[size];
+                              return (
+                                <span key={size} className={cn(
+                                  "px-1.5 py-0.5 text-[8px] font-bold rounded uppercase flex items-center gap-1",
+                                  sizeStockValue === 0 ? "bg-red-50 text-red-500" : "bg-slate-100 text-slate-500"
+                                )}>
+                                  {size}
+                                  {sizeStockValue !== undefined && (
+                                    <span className="opacity-60">({sizeStockValue})</span>
+                                  )}
+                                </span>
+                              );
+                            })}
                           </div>
                           <div className="flex items-center gap-3 mt-1">
                             <span className="text-[10px] font-bold text-slate-400">SKU: {product.sku}</span>
@@ -352,21 +381,36 @@ export default function Sales() {
                                 {sortSizes(product.sizes).map(size => {
                                   const itemSku = getProductSku(product.sku, size);
                                   const isMatched = itemSku.toLowerCase().includes(searchTerm.toLowerCase());
+                                  const sizeStockValue = product.sizeStock?.[size];
+                                  const isOutOfStock = sizeStockValue !== undefined && sizeStockValue <= 0;
+
                                   return (
                                     <button
                                       key={size}
                                       onClick={() => {
+                                        if (isOutOfStock) return;
                                         addToCart(product, size);
                                         setSearchTerm('');
                                       }}
+                                      disabled={isOutOfStock}
                                       className={cn(
-                                        "px-2 py-1 rounded-sm text-[8px] font-black uppercase transition-all",
+                                        "px-2 py-1 rounded-sm text-[8px] font-black uppercase transition-all flex items-center gap-1",
                                         isMatched
                                           ? "bg-accent text-white shadow-sm"
-                                          : "bg-slate-100 text-slate-500 hover:bg-slate-200"
+                                          : isOutOfStock 
+                                            ? "bg-red-50 text-red-300 cursor-not-allowed"
+                                            : "bg-slate-100 text-slate-500 hover:bg-slate-200"
                                       )}
                                     >
                                       {size}
+                                      {sizeStockValue !== undefined && (
+                                        <span className={cn(
+                                          "text-[7px] font-bold",
+                                          isMatched ? "text-white/60" : "text-slate-400"
+                                        )}>
+                                          ({sizeStockValue})
+                                        </span>
+                                      )}
                                     </button>
                                   );
                                 })}
@@ -497,14 +541,14 @@ export default function Sales() {
                   <div className="flex items-center gap-3">
                     <div className="flex items-center bg-white rounded-xl p-1 shadow-sm border border-slate-100">
                       <button 
-                        onClick={() => updateQuantity(item.productId, (item as any).size, -1)} 
+                        onClick={() => updateQuantity(item.productId, item.size, -1)} 
                         className="w-8 h-8 flex items-center justify-center bg-slate-50 text-slate-400 rounded-lg hover:text-danger transition-colors"
                       >
                         <Minus className="w-3.5 h-3.5" />
                       </button>
                       <span className="w-8 text-center text-xs font-black text-slate-800">{item.quantity}</span>
                       <button 
-                        onClick={() => updateQuantity(item.productId, (item as any).size, 1)} 
+                        onClick={() => updateQuantity(item.productId, item.size, 1)} 
                         className="w-8 h-8 flex items-center justify-center bg-slate-50 text-slate-400 rounded-lg hover:text-accent transition-colors"
                       >
                         <Plus className="w-3.5 h-3.5" />

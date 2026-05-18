@@ -24,7 +24,12 @@ export interface Product {
   color: string;
   gender: string;
   stock: number;
+  sizeStock?: Record<string, number>;
   minStock: number;
+  baseCostPrice?: number;
+  shippingCostPrice?: number;
+  interestCostPrice?: number;
+  overheadCostPrice?: number;
   costPrice: number;
   salePrice: number;
   images: string[];
@@ -86,6 +91,8 @@ export interface Sale {
   discount: number;
   storeFee: number;
   customerFee: number;
+  shipping?: number;
+  interest?: number;
   items: SaleItem[];
   paymentMethod: 'dinheiro' | 'pix' | 'cartão' | 'transferência';
   installments?: number;
@@ -119,6 +126,11 @@ export interface Installment {
 
 export interface Purchase {
   id: string;
+  subtotal: number;
+  discount: number;
+  fee: number;
+  freight: number;
+  interest: number;
   total: number;
   supplierId?: string;
   supplierName: string;

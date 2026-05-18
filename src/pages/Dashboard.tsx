@@ -239,15 +239,15 @@ export default function Dashboard() {
           title="Compras a Pagar" 
           value={formatCurrency(stats.pendingPurchasesTotal)} 
           icon={Clock} 
-          color="bg-slate-500"
+          color="bg-danger"
           trend="Notas pendentes"
         />
       </div>
 
       {/* Main Charts & Lists */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+      <div className="grid grid-cols-1 gap-8">
         {/* Daily Sales Chart */}
-        <div className="lg:col-span-2 bg-white dark:bg-slate-900 p-6 rounded-xl shadow-sm border border-gray-100 dark:border-slate-800">
+        <div className="bg-white dark:bg-slate-900 p-6 rounded-xl shadow-sm border border-gray-100 dark:border-slate-800">
           <div className="flex items-center justify-between mb-6">
             <div>
               <h3 className="font-bold text-lg text-slate-800 dark:text-slate-100 tracking-tight">Vendas Diárias</h3>
@@ -298,42 +298,6 @@ export default function Dashboard() {
               </BarChart>
             </ResponsiveContainer>
           </div>
-        </div>
-
-        {/* Recent Sales List */}
-        <div className="bg-white dark:bg-slate-900 p-6 rounded-xl shadow-sm border border-gray-100 dark:border-slate-800 overflow-hidden flex flex-col">
-          <h3 className="font-bold text-lg text-slate-800 dark:text-slate-100 mb-6">Vendas Recentes</h3>
-          <div className="space-y-4 flex-1">
-            {recentSales.map((sale) => (
-              <div key={sale.id} className="flex items-center gap-4 group">
-                <div className="w-10 h-10 rounded-full bg-accent/10 flex items-center justify-center text-accent">
-                  <ShoppingCart className="w-5 h-5" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="font-semibold text-slate-800 dark:text-slate-100 truncate">{sale.customerName || 'Cliente Direto'}</p>
-                  <p className="text-xs text-slate-500 dark:text-slate-400">{new Date(sale.timestamp).toLocaleTimeString('pt-BR')}</p>
-                </div>
-                <div className="text-right">
-                  <p className="font-bold text-slate-900 dark:text-slate-100">{formatCurrency(sale.total)}</p>
-                  <p className={cn(
-                    "text-[10px] font-bold uppercase",
-                    sale.status === 'completed' ? "text-success" : "text-danger"
-                  )}>
-                    {sale.status === 'completed' ? 'PAGO' : 'CANCELADO'}
-                  </p>
-                </div>
-              </div>
-            ))}
-            {recentSales.length === 0 && (
-              <div className="flex flex-col items-center justify-center h-full text-slate-400 dark:text-slate-500 py-8">
-                <Package className="w-12 h-12 mb-2 opacity-20" />
-                <p>Nenhuma venda hoje</p>
-              </div>
-            )}
-          </div>
-          <button className="mt-6 w-full py-2 text-sm font-bold text-accent hover:bg-accent/5 rounded-lg transition-colors border border-accent/20">
-            Ver todas as vendas
-          </button>
         </div>
       </div>
 

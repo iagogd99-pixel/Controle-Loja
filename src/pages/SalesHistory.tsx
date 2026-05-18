@@ -35,7 +35,9 @@ import {
   increment,
   addDoc,
   writeBatch,
-  getDoc
+  getDoc,
+  getDocs,
+  where
 } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '@/src/lib/firebase';
 import { Sale } from '@/src/types';
@@ -102,13 +104,27 @@ export default function SalesHistory() {
     if (!editingSale) return;
     try {
       setLoading(true);
-      await updateDoc(doc(db, 'sales', editingSale.id), {
+      const saleRef = doc(db, 'sales', editingSale.id);
+      const updateData = {
         timestamp: new Date(editForm.timestamp).toISOString(),
         customerName: editForm.customerName,
         paymentMethod: editForm.paymentMethod,
         paymentStatus: editForm.paymentStatus,
         total: editForm.total
-      });
+      };
+
+      await updateDoc(saleRef, updateData);
+
+      // Update linked cash movements
+      const cashMovementsSnap = await getDocs(query(collection(db, 'cash_movements'), where('saleId', '==', editingSale.id)));
+      for (const d of cashMovementsSnap.docs) {
+        await updateDoc(d.ref, {
+          amount: editForm.total,
+          paymentMethod: editForm.paymentMethod,
+          timestamp: new Date(editForm.timestamp).toISOString()
+        });
+      }
+
       alert('Venda atualizada com sucesso!');
       setEditingSale(null);
       setSelectedSale(null);
@@ -143,20 +159,13 @@ export default function SalesHistory() {
     e?.stopPropagation();
 
     const action = async () => {
-      alert('Tentando excluir venda: ' + sale.id);
-      
-      console.log('DEBUG: Iniciando handleDelete para', sale.id);
-      
-      if (!profile) {
-        alert('Aguardando carregamento do perfil para excluir...');
-        return;
-      }
+      if (!profile) return;
       
       try {
         setLoading(true);
         const batch = writeBatch(db);
-        console.log('Iniciando estorno de itens para venda:', sale.id);
         
+        // 1. Revert product stock
         for (const item of sale.items) {
           if (!item.productId) continue;
 
@@ -164,44 +173,53 @@ export default function SalesHistory() {
           try {
             const productSnap = await getDoc(productRef);
             if (productSnap.exists()) {
-              batch.update(productRef, {
+              const updateData: any = {
                 stock: increment(item.quantity)
-              });
+              };
+
+              // Revert size stock if applicable
+              if (item.size) {
+                updateData[`sizeStock.${item.size}`] = increment(item.quantity);
+              }
+
+              batch.update(productRef, updateData);
             }
           } catch (e) {
             console.warn(`Erro ao buscar produto ${item.productId}:`, e);
           }
-          
-          const movementRef = doc(collection(db, 'movements'));
-          batch.set(movementRef, {
-            productId: item.productId,
-            productName: item.name,
-            type: 'in',
-            quantity: item.quantity,
-            reason: 'Estorno: Venda cancelada ' + sale.id,
-            userId: profile?.uid || 'system',
-            userName: profile?.name || 'Sistema',
-            timestamp: new Date().toISOString()
-          });
         }
 
-        const saleRef = doc(db, 'sales', sale.id);
-        batch.delete(saleRef);
+        // 2. Delete linked movements (where saleId === sale.id)
+        const movementsSnap = await getDocs(query(collection(db, 'movements'), where('saleId', '==', sale.id)));
+        movementsSnap.docs.forEach(d => {
+          batch.delete(d.ref);
+        });
+
+        // 3. Delete linked cash movements (where saleId === sale.id)
+        const cashMovementsSnap = await getDocs(query(collection(db, 'cash_movements'), where('saleId', '==', sale.id)));
+        cashMovementsSnap.docs.forEach(d => {
+          batch.delete(d.ref);
+        });
+
+        // 4. Delete the sale itself
+        batch.delete(doc(db, 'sales', sale.id));
 
         await batch.commit();
-        alert('Venda cancelada com sucesso!');
+        alert('Venda excluída e estoque estornado com sucesso!');
         setSelectedSale(null);
       } catch (err: any) {
-        console.error('ERRO FATAL AO CANCELAR VENDA:', err);
-        alert('Erro ao cancelar venda: ' + err.message);
+        console.error('ERRO AO EXCLUIR VENDA:', err);
+        alert('Erro ao excluir venda: ' + err.message);
       } finally {
         setLoading(false);
       }
     };
 
     if (isAdmin) {
-      setPendingAction(() => action);
-      setShowPasswordPrompt(true);
+      if (confirm(`Deseja realmente cancelar e estornar a venda #${sale.id.slice(-6).toUpperCase()}?`)) {
+        setPendingAction(() => action);
+        setShowPasswordPrompt(true);
+      }
     } else {
       alert('Acesso restrito a administradores');
     }

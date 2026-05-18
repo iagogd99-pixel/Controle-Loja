@@ -17,7 +17,8 @@ import {
   TrendingUp,
   Calculator,
   Minus,
-  X
+  X,
+  Lock
 } from 'lucide-react';
 import { 
   collection, 
@@ -31,7 +32,8 @@ import {
   updateDoc,
   serverTimestamp,
   getDocs,
-  limit
+  limit,
+  writeBatch
 } from 'firebase/firestore';
 import { db, auth } from '@/src/lib/firebase';
 import { useAuth } from '@/src/contexts/AuthContext';
@@ -112,11 +114,20 @@ interface Movement {
 }
 
 export default function Finances() {
-  const { profile } = useAuth();
+  const { profile, verifyPassword } = useAuth();
   const [activeSession, setActiveSession] = useState<CashSession | null>(null);
   const [movements, setMovements] = useState<Movement[]>([]);
   const [loading, setLoading] = useState(true);
   
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [submittingStats, setSubmittingStats] = useState(false);
+
+  // Password Verification State
+  const [showPasswordPrompt, setShowPasswordPrompt] = useState(false);
+  const [passwordInput, setPasswordInput] = useState('');
+  const [verifyingPassword, setVerifyingPassword] = useState(false);
+  const [pendingAction, setPendingAction] = useState<() => void>(() => {});
+
   // Modals
   const [showWithdrawalModal, setShowWithdrawalModal] = useState(false);
   const [showSupplyModal, setShowSupplyModal] = useState(false);
@@ -131,6 +142,20 @@ export default function Finances() {
   const [closingAmountReal, setClosingAmountReal] = useState('');
   const [closingNote, setClosingNote] = useState('');
   const [submitting, setSubmitting] = useState(false);
+
+  const confirmPassword = async () => {
+    setVerifyingPassword(true);
+    const isValid = await verifyPassword(passwordInput);
+    setVerifyingPassword(false);
+    
+    if (isValid) {
+      setShowPasswordPrompt(false);
+      setPasswordInput('');
+      pendingAction();
+    } else {
+      alert('Senha incorreta');
+    }
+  };
 
   // Stats
   const [stats, setStats] = useState({
@@ -175,14 +200,23 @@ export default function Finances() {
       limit(50)
     );
 
-    const unsubMovements = onSnapshot(qMovements, (snapshot) => {
+    const unsubMovements = onSnapshot(qMovements, async (snapshot) => {
       const docs = snapshot.docs.map(doc_ => ({
         id: doc_.id,
         ...doc_.data()
       })) as Movement[];
       setMovements(docs);
 
-      const sessStart = activeSession.openedAt instanceof Timestamp ? activeSession.openedAt.toDate() : new Date(activeSession.openedAt);
+      // Recalculate stats using ALL movements from current session
+      const sessStartIso = (activeSession.openedAt instanceof Timestamp ? activeSession.openedAt.toDate() : new Date(activeSession.openedAt)).toISOString();
+      
+      // We fetch all current session movements to ensure stats are accurate
+      const qAllSessionMovements = query(
+        collection(db, 'cash_movements'),
+        where('timestamp', '>=', sessStartIso)
+      );
+      
+      const allMovementsSnap = await getDocs(qAllSessionMovements);
       
       let salesSum = 0;
       let withSum = 0;
@@ -191,20 +225,18 @@ export default function Finances() {
       let pixSum = 0;
       let cardSum = 0;
 
-      docs.forEach(m => {
-        const mDate = m.timestamp instanceof Timestamp ? m.timestamp.toDate() : new Date(m.timestamp);
-        if (mDate >= sessStart) {
-          if (m.type === 'in') {
-             if (m.category === 'venda') salesSum += m.amount;
-             if (m.category === 'suprimento') supSum += m.amount;
-             
-             // Por método
-             if (m.paymentMethod === 'dinheiro') moneySum += m.amount;
-             if (m.paymentMethod === 'pix') pixSum += m.amount;
-             if (m.paymentMethod === 'cartão') cardSum += m.amount;
-          }
-          if (m.type === 'out') withSum += m.amount;
+      allMovementsSnap.forEach(d => {
+        const m = d.data() as Movement;
+        if (m.type === 'in') {
+           if (m.category === 'venda') salesSum += m.amount;
+           if (m.category === 'suprimento') supSum += m.amount;
+           
+           // Por método
+           if (m.paymentMethod === 'dinheiro') moneySum += m.amount;
+           if (m.paymentMethod === 'pix') pixSum += m.amount;
+           if (m.paymentMethod === 'cartão') cardSum += m.amount;
         }
+        if (m.type === 'out') withSum += m.amount;
       });
 
       setStats(prev => ({ 
@@ -277,10 +309,11 @@ export default function Finances() {
         amount: Number(withdrawalAmount),
         type: 'out',
         category: 'sangria',
+        paymentMethod: 'dinheiro',
         reason: withdrawalReason || 'Sangria de Caixa',
         userId: profile.uid,
         userName: profile.name,
-        timestamp: serverTimestamp()
+        timestamp: new Date().toISOString()
       });
       setShowWithdrawalModal(false);
       setWithdrawalAmount('');
@@ -306,7 +339,7 @@ export default function Finances() {
         reason: supplyReason || 'Suprimento de Caixa',
         userId: profile.uid,
         userName: profile.name,
-        timestamp: serverTimestamp()
+        timestamp: new Date().toISOString()
       });
       setShowSupplyModal(false);
       setSupplyAmount('');
@@ -400,6 +433,87 @@ export default function Finances() {
                <Minus className="w-4 h-4" />
                Sangria
              </button>
+          </div>
+        )}
+
+        {/* Emergency reset button for admins to clear session sales */}
+        {activeSession && profile?.role === 'admin' && (
+          <div className="mt-4 p-4 bg-red-50/50 border border-red-100 rounded-2xl flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="w-8 h-8 bg-red-100 rounded-lg flex items-center justify-center text-red-600">
+                <AlertCircle className="w-4 h-4" />
+              </div>
+              <div className="flex-1">
+                <p className="text-[10px] font-black text-red-400 uppercase tracking-widest">Ajuste de Fluxo</p>
+                <h4 className="text-[11px] font-black text-red-900">Zerar Registro de Vendas</h4>
+              </div>
+            </div>
+            
+            <div className="flex items-center gap-2">
+              <AnimatePresence mode="wait">
+                {!showResetConfirm ? (
+                  <motion.button 
+                    key="trigger"
+                    initial={{ opacity: 0, x: 20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: -20 }}
+                    onClick={() => setShowResetConfirm(true)}
+                    className="px-4 py-2 bg-red-600 text-white text-[10px] font-black rounded-lg hover:bg-red-700 transition-colors uppercase"
+                  >
+                    Zerar
+                  </motion.button>
+                ) : (
+                  <motion.div 
+                    key="confirm"
+                    initial={{ opacity: 0, scale: 0.9 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0, scale: 0.9 }}
+                    className="flex items-center gap-2"
+                  >
+                    <button 
+                      onClick={() => setShowResetConfirm(false)}
+                      className="px-3 py-2 bg-slate-200 text-slate-600 text-[10px] font-black rounded-lg uppercase"
+                    >
+                      Não
+                    </button>
+                    <button 
+                      disabled={submittingStats}
+                      onClick={() => {
+                        const action = async () => {
+                          try {
+                            setSubmittingStats(true);
+                            const sessStartIso = (activeSession.openedAt instanceof Timestamp ? activeSession.openedAt.toDate() : new Date(activeSession.openedAt)).toISOString();
+                            const q = query(
+                              collection(db, 'cash_movements'), 
+                              where('timestamp', '>=', sessStartIso),
+                              where('category', '==', 'venda')
+                            );
+                            const snap = await getDocs(q);
+                            const batch = writeBatch(db);
+                            snap.docs.forEach(d => batch.delete(d.ref));
+                            await batch.commit();
+                            
+                            alert('As estatísticas de venda da sessão foram resetadas!');
+                            setShowResetConfirm(false);
+                          } catch (err) {
+                            console.error(err);
+                            alert('Erro ao processar limpeza.');
+                          } finally {
+                            setSubmittingStats(false);
+                          }
+                        };
+                        setPendingAction(() => action);
+                        setShowPasswordPrompt(true);
+                      }}
+                      className="px-4 py-2 bg-red-600 text-white text-[10px] font-black rounded-lg hover:bg-red-700 transition-colors uppercase flex items-center gap-2"
+                    >
+                      {submittingStats && <Loader2 className="w-3 h-3 animate-spin" />}
+                      Sim, Zerar
+                    </button>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
           </div>
         )}
       </div>
@@ -684,6 +798,61 @@ export default function Finances() {
                   Confirmar {showWithdrawalModal ? 'Sangria' : 'Suprimento'}
                 </button>
               </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Password Verification Modal */}
+      <AnimatePresence>
+        {showPasswordPrompt && (
+          <div className="fixed inset-0 z-[120] flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowPasswordPrompt(false)}
+              className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"
+            />
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-white rounded-[32px] shadow-2xl w-full max-w-xs overflow-hidden relative z-[121] p-8 text-center"
+            >
+              <div className="w-16 h-16 bg-accent/10 rounded-2xl flex items-center justify-center text-accent mx-auto mb-6">
+                <Lock className="w-8 h-8" />
+              </div>
+              <h2 className="text-lg font-black text-slate-800 uppercase tracking-tighter mb-2">Acesso Restrito</h2>
+              <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-6">Confirme sua senha de Admin para continuar</p>
+              
+              <div className="space-y-4">
+                <input 
+                  type="password"
+                  value={passwordInput}
+                  onChange={(e) => setPasswordInput(e.target.value)}
+                  placeholder="Sua senha..."
+                  className="w-full bg-slate-50 border-none rounded-2xl px-6 py-4 text-center font-bold outline-none focus:ring-2 focus:ring-accent/20 transition-all"
+                  autoFocus
+                  onKeyDown={(e) => e.key === 'Enter' && confirmPassword()}
+                />
+                
+                <div className="flex flex-col gap-2">
+                  <button 
+                    onClick={confirmPassword}
+                    disabled={verifyingPassword}
+                    className="w-full py-4 bg-accent text-white font-black rounded-2xl text-[10px] uppercase shadow-lg shadow-accent/20 transition-all hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50"
+                  >
+                    {verifyingPassword ? 'Verificando...' : 'Confirmar Acesso'}
+                  </button>
+                  <button 
+                    onClick={() => setShowPasswordPrompt(false)}
+                    className="w-full py-4 bg-slate-50 text-slate-400 font-black rounded-2xl text-[10px] uppercase"
+                  >
+                    Cancelar
+                  </button>
+                </div>
+              </div>
             </motion.div>
           </div>
         )}

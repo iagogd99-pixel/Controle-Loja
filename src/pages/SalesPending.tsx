@@ -26,6 +26,7 @@ import {
   addDoc,
   writeBatch,
   getDoc,
+  getDocs,
   increment,
   deleteDoc
 } from 'firebase/firestore';
@@ -199,29 +200,35 @@ export default function SalesPending() {
     try {
       const batch = writeBatch(db);
       
+      // 1. Revert product stock
       for (const item of sale.items) {
         if (!item.productId) continue;
         const productRef = doc(db, 'products', item.productId);
         const productSnap = await getDoc(productRef);
         if (productSnap.exists()) {
-          batch.update(productRef, {
+          const updateData: any = {
             stock: increment(item.quantity)
-          });
+          };
+          if (item.size) {
+            updateData[`sizeStock.${item.size}`] = increment(item.quantity);
+          }
+          batch.update(productRef, updateData);
         }
-        
-        const movementRef = doc(collection(db, 'movements'));
-        batch.set(movementRef, {
-          productId: item.productId,
-          productName: item.name,
-          type: 'in',
-          quantity: item.quantity,
-          reason: 'Estorno: Venda Pendente cancelada ' + sale.id,
-          userId: profile.uid,
-          userName: profile.name,
-          timestamp: new Date().toISOString()
-        });
       }
 
+      // 2. Delete linked movements (where saleId === sale.id)
+      const movementsSnap = await getDocs(query(collection(db, 'movements'), where('saleId', '==', sale.id)));
+      movementsSnap.docs.forEach(d => {
+        batch.delete(d.ref);
+      });
+
+      // 3. Delete linked cash movements (where saleId === sale.id)
+      const cashMovementsSnap = await getDocs(query(collection(db, 'cash_movements'), where('saleId', '==', sale.id)));
+      cashMovementsSnap.docs.forEach(d => {
+        batch.delete(d.ref);
+      });
+
+      // 4. Delete the sale itself
       batch.delete(doc(db, 'sales', sale.id));
       await batch.commit();
       

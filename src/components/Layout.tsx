@@ -271,7 +271,11 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
         <header className="sticky top-0 z-30 h-14 md:h-16 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 px-4 md:px-6 flex items-center justify-between transition-colors duration-300">
           <div className="flex items-center gap-2 md:gap-4">
             <button 
-              onClick={() => setIsSidebarOpen(!isSidebarOpen)}
+              onClick={() => {
+                const nextState = !isSidebarOpen;
+                if (nextState) setOpenSubmenus([]);
+                setIsSidebarOpen(nextState);
+              }}
               className="p-2 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-xl transition-colors text-slate-500 dark:text-slate-400"
             >
               <Menu className="w-5 h-5 md:w-6 h-6" />

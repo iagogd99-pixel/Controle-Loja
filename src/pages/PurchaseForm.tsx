@@ -41,7 +41,12 @@ interface Product {
   name: string;
   sku: string;
   stock: number;
+  sizeStock?: Record<string, number>;
   costPrice: number;
+  baseCostPrice?: number;
+  shippingCostPrice?: number;
+  interestCostPrice?: number;
+  overheadCostPrice?: number;
   minStock: number;
   images?: string[];
   size?: string;
@@ -83,6 +88,7 @@ export default function PurchaseForm() {
   const [discount, setDiscount] = useState(0);
   const [fee, setFee] = useState(0);
   const [freight, setFreight] = useState(0);
+  const [interest, setInterest] = useState(0);
   const [paymentMethod, setPaymentMethod] = useState('dinheiro');
   const [paymentStatus, setPaymentStatus] = useState<'paid' | 'pending'>('paid');
   const [installments, setInstallments] = useState(1);
@@ -96,6 +102,8 @@ export default function PurchaseForm() {
   const [showQuickAddModal, setShowQuickAddModal] = useState(false);
 
   // Quick Add State
+  const [sizeModalProduct, setSizeModalProduct] = useState<Product | null>(null);
+  const [sizeEntries, setSizeEntries] = useState<Record<string, { qty: number, price: number }>>({});
 
   const [categories, setCategories] = useState<{id: string, name: string, type: string}[]>([]);
   const [creatingProduct, setCreatingProduct] = useState(false);
@@ -140,6 +148,7 @@ export default function PurchaseForm() {
           setDiscount(data.discount || 0);
           setFee(data.fee || 0);
           setFreight(data.freight || 0);
+          setInterest(data.interest || 0);
           setPaymentMethod(data.paymentMethod || 'dinheiro');
           setPaymentStatus(data.paymentStatus || 'paid');
           setInstallments(data.installments || 1);
@@ -155,17 +164,18 @@ export default function PurchaseForm() {
     return () => unsubscribe();
   }, [searchParams]);
 
-  const addToCart = React.useCallback((product: Product, size?: string) => {
+  const addToCart = React.useCallback((product: Product, size?: string, quantity: number = 1, price?: number) => {
     const finalSize = size || product.size;
     const itemSku = getProductSku(product.sku, finalSize);
     const cartItemId = `${product.id}-${finalSize || 'no-size'}`;
+    const finalPrice = price !== undefined ? price : (product.costPrice || 0);
 
     setCart(prevCart => {
       const existing = prevCart.find(item => `${item.productId}-${item.size || 'no-size'}` === cartItemId);
       if (existing) {
         return prevCart.map(item => 
           `${item.productId}-${item.size || 'no-size'}` === cartItemId 
-            ? { ...item, quantity: item.quantity + 1, total: (item.quantity + 1) * item.price }
+            ? { ...item, quantity: item.quantity + quantity, total: (item.quantity + quantity) * finalPrice, price: finalPrice }
             : item
         );
       } else {
@@ -174,15 +184,40 @@ export default function PurchaseForm() {
           sku: itemSku,
           size: finalSize,
           name: product.name + (finalSize ? ` (${finalSize})` : ''),
-          quantity: 1,
-          price: product.costPrice || 0,
-          total: product.costPrice || 0,
+          quantity: quantity,
+          price: finalPrice,
+          total: finalPrice * quantity,
           image: product.images?.[0]
         }];
       }
     });
-    setSearchTerm('');
   }, []);
+
+  const openSizeModal = (product: Product) => {
+    setSizeModalProduct(product);
+    const initialEntries: Record<string, { qty: number, price: number }> = {};
+    // Pre-fill with existing product sizes if any, but default to 0 qty
+    const productSizes = product.sizes || (product.size ? [product.size] : []);
+    productSizes.forEach(s => {
+      initialEntries[s] = { qty: 0, price: product.costPrice || 0 };
+    });
+    setSizeEntries(initialEntries);
+  };
+
+  const addSizesToCart = () => {
+    if (!sizeModalProduct) return;
+    
+    Object.entries(sizeEntries).forEach(([size, data]) => {
+      const entry = data as { qty: number, price: number };
+      if (entry.qty > 0) {
+        addToCart(sizeModalProduct, size, entry.qty, entry.price);
+      }
+    });
+    
+    setSizeModalProduct(null);
+    setSizeEntries({});
+    setSearchTerm('');
+  };
 
   // Handle auto-add from returnTo
   useEffect(() => {
@@ -225,7 +260,7 @@ export default function PurchaseForm() {
   };
 
   const cartTotal = cart.reduce((acc, item) => acc + item.total, 0);
-  const finalTotal = cartTotal - discount + fee + freight;
+  const finalTotal = cartTotal - discount + fee + freight + interest;
 
   const handleSubmit = async () => {
     if (!profile || cart.length === 0 || submitting) return;
@@ -259,16 +294,22 @@ export default function PurchaseForm() {
         if (editingId && originalPurchase) {
           for (const item of originalPurchase.items) {
             const productRef = doc(db, 'products', item.productId);
-            transaction.update(productRef, {
+            const updateData: any = {
               stock: increment(-item.quantity), // Subtract what was added
               updatedAt: serverTimestamp()
-            });
+            };
+
+            if (item.size) {
+              updateData[`sizeStock.${item.size}`] = increment(-item.quantity);
+            }
+
+            transaction.update(productRef, updateData);
             
             // Register reversal movement
             const movementRef = doc(collection(db, 'movements'));
             transaction.set(movementRef, {
               productId: item.productId,
-              productName: item.name,
+              productName: item.name + (item.size ? ` (Tamanho: ${item.size})` : ''),
               type: 'out',
               quantity: item.quantity,
               reason: `Estorno (Edição) Compra #${editingId.slice(-6).toUpperCase()}`,
@@ -286,6 +327,7 @@ export default function PurchaseForm() {
           discount: discount,
           fee: fee,
           freight: freight,
+          interest: interest,
           total: finalTotal,
           paymentMethod: paymentMethod,
           paymentStatus: paymentStatus,
@@ -321,29 +363,47 @@ export default function PurchaseForm() {
             userId: profile.uid,
             userName: profile.name,
             purchaseId: purchaseRef.id,
-            timestamp: serverTimestamp()
+            timestamp: new Date().toISOString()
           });
         }
 
         // 2. Update stock and register movements for each product (New values)
+        const totalItemsCount = cart.reduce((acc, item) => acc + item.quantity, 0);
+        const freeCharge = fee - discount;
+        const totalOverhead = freight + interest + freeCharge;
+        const overheadPerPiece = totalItemsCount > 0 ? totalOverhead / totalItemsCount : 0;
+        const shippingPerPiece = totalItemsCount > 0 ? freight / totalItemsCount : 0;
+        const interestPerPiece = totalItemsCount > 0 ? interest / totalItemsCount : 0;
+
         for (const item of cart) {
           const productRef = doc(db, 'products', item.productId);
-          
-          // Update product stock and cost price
-          transaction.update(productRef, {
+          const effectiveCost = item.price + overheadPerPiece;
+
+          const updateData: any = {
             stock: increment(item.quantity),
-            costPrice: item.price, // Update to the latest cost price
+            baseCostPrice: item.price,
+            shippingCostPrice: shippingPerPiece,
+            interestCostPrice: interestPerPiece,
+            overheadCostPrice: overheadPerPiece,
+            costPrice: effectiveCost,
             updatedAt: serverTimestamp()
-          });
+          };
+
+          if (item.size) {
+            updateData[`sizeStock.${item.size}`] = increment(item.quantity);
+          }
+          
+          transaction.update(productRef, updateData);
 
           // Register movement document
           const movementRef = doc(collection(db, 'movements'));
           transaction.set(movementRef, {
             productId: item.productId,
-            productName: item.name,
+            productName: item.name + (item.size ? ` (Tamanho: ${item.size})` : ''),
             type: 'in',
             quantity: item.quantity,
             reason: `${editingId ? 'Ajuste (Edição)' : 'Entrada'} via Compra #${purchaseRef.id.slice(-6).toUpperCase()}`,
+            purchaseId: purchaseRef.id,
             userId: profile.uid,
             userName: profile.name,
             timestamp: serverTimestamp()
@@ -460,7 +520,7 @@ export default function PurchaseForm() {
                                   return (
                                     <button
                                       key={size}
-                                      onClick={() => addToCart(product, size)}
+                                      onClick={() => openSizeModal(product)}
                                       className={cn(
                                         "px-2 py-1 rounded-sm text-[8px] font-black uppercase transition-all",
                                         isMatched
@@ -476,7 +536,7 @@ export default function PurchaseForm() {
                             )}
                         </div>
                         <button
-                          onClick={() => addToCart(product)}
+                          onClick={() => openSizeModal(product)}
                           className="w-10 h-10 rounded-xl flex items-center justify-center bg-primary text-white shadow-lg shadow-primary/20 hover:scale-105 active:scale-95 transition-all"
                         >
                           <Plus className="w-5 h-5" />
@@ -648,13 +708,23 @@ export default function PurchaseForm() {
                </div>
              </div>
 
-             <div className="grid grid-cols-1 gap-3">
+             <div className="grid grid-cols-2 gap-3">
                <div>
                  <p className="text-[9px] font-bold text-slate-400 uppercase mb-1 pl-1">Frete (R$)</p>
                  <input 
                    type="number"
                    value={freight || ''}
                    onChange={(e) => setFreight(Number(e.target.value))}
+                   placeholder="0,00"
+                   className="w-full px-3 py-1.5 bg-white border border-gray-100 rounded-lg text-xs font-bold focus:ring-1 focus:ring-accent outline-none"
+                 />
+               </div>
+               <div>
+                 <p className="text-[9px] font-bold text-slate-400 uppercase mb-1 pl-1">Juros (R$)</p>
+                 <input 
+                   type="number"
+                   value={interest || ''}
+                   onChange={(e) => setInterest(Number(e.target.value))}
                    placeholder="0,00"
                    className="w-full px-3 py-1.5 bg-white border border-gray-100 rounded-lg text-xs font-bold focus:ring-1 focus:ring-accent outline-none"
                  />
@@ -727,6 +797,140 @@ export default function PurchaseForm() {
           </div>
         </div>
       </div>
+
+      {/* Size Selection Modal */}
+      <AnimatePresence>
+        {sizeModalProduct && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 overflow-y-auto">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setSizeModalProduct(null)}
+              className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm"
+            />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="bg-white rounded-[32px] shadow-2xl w-full max-w-lg overflow-hidden relative z-10 flex flex-col max-h-[90vh]"
+            >
+              <div className="p-6 border-b border-slate-50 flex items-center justify-between">
+                <div>
+                  <h3 className="text-lg font-black text-slate-800 uppercase leading-tight">{sizeModalProduct.name}</h3>
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">Definir quantidades por tamanho</p>
+                </div>
+                <button 
+                  onClick={() => setSizeModalProduct(null)}
+                  className="p-2 text-slate-400 hover:text-slate-600 transition-colors"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto p-6">
+                <div className="space-y-6">
+                  {/* All sizes from categories */}
+                  <div className="grid grid-cols-1 gap-4">
+                    {sortSizes(categories.filter(c => c.type === 'tamanho').map(c => c.name)).map(size => {
+                      const entry = sizeEntries[size] || { qty: 0, price: sizeModalProduct.costPrice || 0 };
+                      const isProductSize = sizeModalProduct.sizes?.includes(size) || sizeModalProduct.size === size;
+                      
+                      return (
+                        <div key={size} className={cn(
+                          "grid grid-cols-12 gap-3 p-4 rounded-2xl border transition-all",
+                          entry.qty > 0 ? "bg-accent/5 border-accent/20" : "bg-slate-50 border-slate-100",
+                          !isProductSize && "opacity-60"
+                        )}>
+                          <div className="col-span-2 space-y-1">
+                            <p className="text-[9px] font-black text-slate-400 uppercase">Tam.</p>
+                            <div className="h-10 rounded-xl bg-white shadow-sm border border-slate-100 flex items-center justify-center font-black text-xs text-slate-800">
+                              {size}
+                            </div>
+                          </div>
+                          
+                          <div className="col-span-5 space-y-1">
+                            <p className="text-[9px] font-black text-slate-400 uppercase">Quantidade</p>
+                            <div className="h-10 grid grid-cols-3 bg-white rounded-xl p-1 border border-slate-200">
+                              <button 
+                                onClick={() => setSizeEntries(prev => ({
+                                  ...prev,
+                                  [size]: { ...entry, qty: Math.max(0, entry.qty - 1) }
+                                }))}
+                                className="flex items-center justify-center bg-slate-50 text-slate-400 rounded-lg hover:text-danger hover:bg-danger/10 transition-colors"
+                              >
+                                <Minus className="w-3.5 h-3.5" />
+                              </button>
+                              <input 
+                                type="number" 
+                                min="0"
+                                value={entry.qty || ''}
+                                placeholder="0"
+                                onChange={(e) => {
+                                  const val = parseInt(e.target.value) || 0;
+                                  setSizeEntries(prev => ({
+                                    ...prev,
+                                    [size]: { ...entry, qty: val }
+                                  }));
+                                }}
+                                className="w-full text-center text-xs font-black outline-none border-none focus:ring-0 bg-transparent p-0"
+                              />
+                              <button 
+                                onClick={() => setSizeEntries(prev => ({
+                                  ...prev,
+                                  [size]: { ...entry, qty: entry.qty + 1 }
+                                }))}
+                                className="flex items-center justify-center bg-slate-50 text-slate-400 rounded-lg hover:text-accent hover:bg-accent/10 transition-colors"
+                              >
+                                <Plus className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </div>
+                          
+                          <div className="col-span-5 space-y-1">
+                            <p className="text-[9px] font-black text-slate-400 uppercase">Custo Un.</p>
+                            <div className="h-10 flex items-center bg-white rounded-xl px-3 border border-slate-200">
+                              <span className="text-[10px] text-slate-400 font-bold mr-1">R$</span>
+                              <input 
+                                type="number" 
+                                step="0.01"
+                                value={entry.price || ''}
+                                onChange={(e) => {
+                                  const val = parseFloat(e.target.value) || 0;
+                                  setSizeEntries(prev => ({
+                                    ...prev,
+                                    [size]: { ...entry, price: val }
+                                  }));
+                                }}
+                                className="w-full text-xs font-black outline-none border-none focus:ring-0 bg-transparent"
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+
+              <div className="p-6 bg-slate-50 border-t border-slate-100 flex items-center justify-between gap-4">
+                <div className="text-left">
+                  <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Total selecionado</p>
+                  <p className="text-lg font-black text-primary">
+                    {Object.values(sizeEntries).reduce((acc: number, curr: any) => acc + (curr.qty || 0), 0)} <span className="text-xs font-bold">unidades</span>
+                  </p>
+                </div>
+                <button 
+                  onClick={addSizesToCart}
+                  className="px-8 py-3.5 bg-accent text-white font-black rounded-2xl shadow-lg shadow-accent/20 hover:bg-accent/90 transition-all text-[10px] uppercase tracking-widest"
+                >
+                  Adicionar ao Carrinho
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

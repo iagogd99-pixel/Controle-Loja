@@ -26,7 +26,10 @@ import {
   addDoc,
   deleteDoc,
   Timestamp,
-  writeBatch
+  writeBatch,
+  getDoc,
+  getDocs,
+  increment
 } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '@/src/lib/firebase';
 import { Purchase } from '@/src/types';
@@ -176,17 +179,56 @@ export default function PurchasesPending() {
   const handleDelete = async (purchase: Purchase) => {
     if (!purchase?.id) return;
     
-    if (!confirm(`Deseja realmente excluir esta compra #${purchase.id.slice(-6).toUpperCase()}? O estoque não será revertido automaticamente.`)) return;
+    if (!confirm(`Deseja realmente excluir esta compra #${purchase.id.slice(-6).toUpperCase()}? O estoque será revertido automaticamente.`)) return;
     
     setIsProcessing(true);
     try {
-      console.log('Attempting to delete purchase:', purchase.id);
-      await deleteDoc(doc(db, 'purchases', purchase.id));
-      console.log('Purchase deleted successfully');
+      const batch = writeBatch(db);
+
+      // 1. Revert product stock (Subtract what was added)
+      if (purchase.items && Array.isArray(purchase.items)) {
+        for (const item of purchase.items) {
+          const productRef = doc(db, 'products', item.productId);
+          try {
+            const productSnap = await getDoc(productRef);
+            if (productSnap.exists()) {
+              const updateData: any = {
+                stock: increment(-item.quantity)
+              };
+
+              if (item.size) {
+                updateData[`sizeStock.${item.size}`] = increment(-item.quantity);
+              }
+
+              batch.update(productRef, updateData);
+            }
+          } catch (e) {
+            console.warn(`Erro ao buscar produto ${item.productId}:`, e);
+          }
+        }
+      }
+
+      // 2. Delete linked movements (where purchaseId === purchase.id)
+      const movementsSnap = await getDocs(query(collection(db, 'movements'), where('purchaseId', '==', purchase.id)));
+      movementsSnap.docs.forEach(d => {
+        batch.delete(d.ref);
+      });
+
+      // 3. Delete linked cash movements (where purchaseId === purchase.id)
+      const cashMovementsSnap = await getDocs(query(collection(db, 'cash_movements'), where('purchaseId', '==', purchase.id)));
+      cashMovementsSnap.docs.forEach(d => {
+        batch.delete(d.ref);
+      });
+
+      // 4. Delete the purchase itself
+      batch.delete(doc(db, 'purchases', purchase.id));
+
+      await batch.commit();
       setSelectedPurchase(null);
+      alert('Compra excluída e estoque revertido com sucesso!');
     } catch (error) {
       console.error('Error deleting purchase:', error);
-      handleFirestoreError(error, OperationType.DELETE, `purchases/${purchase.id}`);
+      alert('Erro ao excluir compra');
     } finally {
       setIsProcessing(false);
     }

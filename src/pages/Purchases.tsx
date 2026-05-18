@@ -21,7 +21,11 @@ import {
   Timestamp,
   where,
   doc,
-  deleteDoc
+  deleteDoc,
+  writeBatch,
+  getDoc,
+  getDocs,
+  increment
 } from 'firebase/firestore';
 import { db } from '@/src/lib/firebase';
 import { Purchase } from '@/src/types';
@@ -94,16 +98,59 @@ export default function Purchases() {
   const handleDelete = async (purchase: Purchase) => {
     const action = async () => {
       try {
-        await deleteDoc(doc(db, 'purchases', purchase.id));
-        alert('Compra excluída com sucesso!');
+        setLoading(true);
+        const batch = writeBatch(db);
+
+        // 1. Revert product stock (Subtract what was added)
+        if (purchase.items && Array.isArray(purchase.items)) {
+          for (const item of purchase.items) {
+            const productRef = doc(db, 'products', item.productId);
+            try {
+              const productSnap = await getDoc(productRef);
+              if (productSnap.exists()) {
+                const updateData: any = {
+                  stock: increment(-item.quantity)
+                };
+
+                if (item.size) {
+                  updateData[`sizeStock.${item.size}`] = increment(-item.quantity);
+                }
+
+                batch.update(productRef, updateData);
+              }
+            } catch (e) {
+              console.warn(`Erro ao buscar produto ${item.productId}:`, e);
+            }
+          }
+        }
+
+        // 2. Delete linked movements (where purchaseId === purchase.id)
+        const movementsSnap = await getDocs(query(collection(db, 'movements'), where('purchaseId', '==', purchase.id)));
+        movementsSnap.docs.forEach(d => {
+          batch.delete(d.ref);
+        });
+
+        // 3. Delete linked cash movements (where purchaseId === purchase.id)
+        const cashMovementsSnap = await getDocs(query(collection(db, 'cash_movements'), where('purchaseId', '==', purchase.id)));
+        cashMovementsSnap.docs.forEach(d => {
+          batch.delete(d.ref);
+        });
+
+        // 4. Delete the purchase itself
+        batch.delete(doc(db, 'purchases', purchase.id));
+
+        await batch.commit();
+        alert('Compra excluída e estoque revertido com sucesso!');
       } catch (error) {
         console.error(error);
         alert('Erro ao excluir compra');
+      } finally {
+        setLoading(false);
       }
     };
 
     if (isAdmin) {
-      if (confirm(`Deseja realmente excluir esta compra #${purchase.id.slice(-6).toUpperCase()}? O estoque não será revertido automaticamente.`)) {
+      if (confirm(`Deseja realmente excluir esta compra #${purchase.id.slice(-6).toUpperCase()}? O estoque será revertido automaticamente.`)) {
         setPendingAction(() => action);
         setShowPasswordPrompt(true);
       }

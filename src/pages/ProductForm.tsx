@@ -57,6 +57,7 @@ export default function ProductForm() {
   const [fetching, setFetching] = useState(false);
   const [images, setImages] = useState<string[]>([]);
   const [selectedSizes, setSelectedSizes] = useState<string[]>([]);
+  const [sizeStock, setSizeStock] = useState<Record<string, number>>({});
   const [categories, setCategories] = useState<{id: string, name: string, type: string}[]>([]);
   
   const { register, handleSubmit, reset, formState: { errors }, watch, setValue } = useForm<FormData>({
@@ -90,6 +91,7 @@ export default function ProductForm() {
           reset(data as FormData);
           setImages(data.images || []);
           setSelectedSizes(data.sizes || (data.size ? [data.size] : []));
+          setSizeStock(data.sizeStock || {});
         }
         setFetching(false);
       };
@@ -119,9 +121,17 @@ export default function ProductForm() {
   const onSubmit = async (data: FormData) => {
     setLoading(true);
     try {
+      // Calculate total stock from sizeStock if sizes exist
+      let totalStock = data.stock;
+      if (selectedSizes.length > 0) {
+        totalStock = selectedSizes.reduce((acc, size) => acc + (sizeStock[size] || 0), 0);
+      }
+
       const payload = {
         ...data,
+        stock: totalStock,
         sizes: selectedSizes,
+        sizeStock,
         images,
         updatedAt: new Date().toISOString(),
       };
@@ -328,6 +338,46 @@ export default function ProductForm() {
           </div>
         </div>
 
+        {/* Stock by Size Section */}
+        <AnimatePresence>
+          {selectedSizes.length > 0 && (
+            <motion.div 
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              exit={{ opacity: 0, height: 0 }}
+              className="bg-white p-6 rounded-[32px] border border-gray-100 shadow-sm space-y-4 overflow-hidden"
+            >
+              <div className="flex items-center gap-2 mb-2">
+                <div className="w-1.5 h-4 bg-primary rounded-full" />
+                <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Estoque por Tamanho</h3>
+              </div>
+              
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                {sortSizes(selectedSizes).map(size => (
+                  <div key={size} className="space-y-1">
+                    <label className="text-[10px] font-black text-slate-500 uppercase ml-1">Tam. {size}</label>
+                    <input 
+                      type="number"
+                      min="0"
+                      value={sizeStock[size] || 0}
+                      onChange={(e) => {
+                        const val = parseInt(e.target.value) || 0;
+                        setSizeStock(prev => ({ ...prev, [size]: val }));
+                      }}
+                      className="form-input py-2 text-center text-xs font-black bg-slate-50 border-none"
+                    />
+                  </div>
+                ))}
+              </div>
+              <div className="pt-2 border-t border-slate-50">
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest text-right">
+                  Total de unidades: <span className="text-primary">{selectedSizes.reduce((acc, s) => acc + (sizeStock[s] || 0), 0)}</span>
+                </p>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
         {/* Pricing & Stock */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="bg-white p-6 rounded-[32px] border border-gray-100 shadow-sm space-y-4">
@@ -364,13 +414,21 @@ export default function ProductForm() {
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1">
-                <label className="text-[11px] font-bold text-slate-600 uppercase ml-1">Estoque</label>
+                <label className="text-[11px] font-bold text-slate-600 uppercase ml-1">Estoque Total</label>
                 <input 
                   type="number" 
                   {...register('stock', { valueAsNumber: true })} 
-                  className="form-input py-2.5 text-sm bg-slate-50 border-none"
+                  className={cn(
+                    "form-input py-2.5 text-sm bg-slate-50 border-none",
+                    selectedSizes.length > 0 && "opacity-50 pointer-events-none"
+                  )}
                   placeholder="0"
+                  readOnly={selectedSizes.length > 0}
+                  value={selectedSizes.length > 0 ? selectedSizes.reduce((acc, s) => acc + (sizeStock[s] || 0), 0) : watch('stock')}
                 />
+                {selectedSizes.length > 0 && (
+                  <p className="text-[8px] text-slate-400 italic">Calculado automaticamente pelos tamanhos</p>
+                )}
               </div>
               <div className="space-y-1">
                 <label className="text-[11px] font-bold text-slate-600 uppercase ml-1">Mínimo</label>
