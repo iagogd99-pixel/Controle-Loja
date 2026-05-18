@@ -32,7 +32,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '@/src/lib/firebase';
 import { useAuth } from '@/src/contexts/AuthContext';
-import { formatCurrency, cn } from '@/src/lib/utils';
+import { formatCurrency, cn, getProductSku, sortSizes } from '@/src/lib/utils';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -45,10 +45,13 @@ interface Product {
   minStock: number;
   images?: string[];
   size?: string;
+  sizes?: string[];
 }
 
 interface PurchaseItem {
   productId: string;
+  sku: string;
+  size?: string;
   name: string;
   quantity: number;
   price: number; // For cost price at time of purchase
@@ -83,6 +86,7 @@ export default function PurchaseForm() {
   const [paymentMethod, setPaymentMethod] = useState('dinheiro');
   const [paymentStatus, setPaymentStatus] = useState<'paid' | 'pending'>('paid');
   const [installments, setInstallments] = useState(1);
+  const [purchaseDate, setPurchaseDate] = useState(new Date().toISOString().slice(0, 16));
   const [editingId, setEditingId] = useState<string | null>(null);
   const [originalPurchase, setOriginalPurchase] = useState<any>(null);
   
@@ -139,6 +143,10 @@ export default function PurchaseForm() {
           setPaymentMethod(data.paymentMethod || 'dinheiro');
           setPaymentStatus(data.paymentStatus || 'paid');
           setInstallments(data.installments || 1);
+          if (data.timestamp) {
+            const date = new Date(data.timestamp);
+            setPurchaseDate(date.toISOString().slice(0, 16));
+          }
         }
       };
       fetchPurchase();
@@ -147,19 +155,25 @@ export default function PurchaseForm() {
     return () => unsubscribe();
   }, [searchParams]);
 
-  const addToCart = React.useCallback((product: Product) => {
+  const addToCart = React.useCallback((product: Product, size?: string) => {
+    const finalSize = size || product.size;
+    const itemSku = getProductSku(product.sku, finalSize);
+    const cartItemId = `${product.id}-${finalSize || 'no-size'}`;
+
     setCart(prevCart => {
-      const existing = prevCart.find(item => item.productId === product.id);
+      const existing = prevCart.find(item => `${item.productId}-${item.size || 'no-size'}` === cartItemId);
       if (existing) {
         return prevCart.map(item => 
-          item.productId === product.id 
+          `${item.productId}-${item.size || 'no-size'}` === cartItemId 
             ? { ...item, quantity: item.quantity + 1, total: (item.quantity + 1) * item.price }
             : item
         );
       } else {
         return [...prevCart, {
           productId: product.id,
-          name: product.name,
+          sku: itemSku,
+          size: finalSize,
+          name: product.name + (finalSize ? ` (${finalSize})` : ''),
           quantity: 1,
           price: product.costPrice || 0,
           total: product.costPrice || 0,
@@ -185,23 +199,26 @@ export default function PurchaseForm() {
     }
   }, [searchParams, products, setSearchParams, addToCart]);
 
-  const removeFromCart = (productId: string) => {
-    setCart(cart.filter(item => item.productId !== productId));
+  const removeFromCart = (productId: string, size?: string) => {
+    const cartItemId = `${productId}-${size || 'no-size'}`;
+    setCart(cart.filter(item => `${item.productId}-${item.size || 'no-size'}` !== cartItemId));
   };
 
-  const updateQuantity = (productId: string, quantity: number) => {
+  const updateQuantity = (productId: string, size: string | undefined, quantity: number) => {
     if (quantity <= 0) return;
+    const cartItemId = `${productId}-${size || 'no-size'}`;
     setCart(cart.map(item => 
-      item.productId === productId 
+      `${item.productId}-${item.size || 'no-size'}` === cartItemId 
         ? { ...item, quantity, total: quantity * item.price }
         : item
     ));
   };
 
-  const updatePrice = (productId: string, price: number) => {
+  const updatePrice = (productId: string, size: string | undefined, price: number) => {
     if (price < 0) return;
+    const cartItemId = `${productId}-${size || 'no-size'}`;
     setCart(cart.map(item => 
-      item.productId === productId 
+      `${item.productId}-${item.size || 'no-size'}` === cartItemId 
         ? { ...item, price, total: item.quantity * price }
         : item
     ));
@@ -276,7 +293,7 @@ export default function PurchaseForm() {
           installmentsList: installmentsList,
           status: 'completed',
           updatedAt: serverTimestamp(),
-          ...(editingId ? {} : { timestamp: serverTimestamp() }),
+          timestamp: new Date(purchaseDate).toISOString(),
           userId: profile.uid,
           userName: profile.name,
           note: note,
@@ -345,7 +362,8 @@ export default function PurchaseForm() {
 
   const filteredProducts = products.filter(p => 
     p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    p.sku.toLowerCase().includes(searchTerm.toLowerCase())
+    p.sku.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    p.sizes?.some(s => getProductSku(p.sku, s).toLowerCase().includes(searchTerm.toLowerCase()))
   );
 
   return (
@@ -418,15 +436,44 @@ export default function PurchaseForm() {
                       </div>
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-black text-slate-800 leading-tight uppercase truncate">{product.name}</p>
-                        <div className="flex items-center gap-3 mt-0.5">
+                        <div className="flex flex-wrap gap-1 mt-1">
+                          {sortSizes(product.sizes || (product.size ? [product.size] : [])).map(size => (
+                            <span key={size} className="px-1.5 py-0.5 bg-slate-100 text-[8px] font-bold text-slate-500 rounded uppercase">
+                              {size}
+                            </span>
+                          ))}
+                        </div>
+                        <div className="flex items-center gap-3 mt-1">
                           <span className="text-[10px] font-bold text-slate-400">SKU: {product.sku}</span>
                           <span className="text-[10px] font-bold text-slate-400">Estoque: {product.stock}</span>
                         </div>
                       </div>
                       <div className="flex items-center gap-4">
-                        <div className="text-right">
+                        <div className="flex flex-col items-end gap-1">
                            <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Custo Est.</p>
                            <span className="text-sm font-black text-accent">{formatCurrency(product.costPrice || 0)}</span>
+                           {product.sizes && product.sizes.length > 0 && (
+                              <div className="flex flex-wrap justify-end gap-1 max-w-[150px] mt-1">
+                                {sortSizes(product.sizes).map(size => {
+                                  const itemSku = getProductSku(product.sku, size);
+                                  const isMatched = itemSku.toLowerCase().includes(searchTerm.toLowerCase());
+                                  return (
+                                    <button
+                                      key={size}
+                                      onClick={() => addToCart(product, size)}
+                                      className={cn(
+                                        "px-2 py-1 rounded-sm text-[8px] font-black uppercase transition-all",
+                                        isMatched
+                                          ? "bg-accent text-white shadow-sm"
+                                          : "bg-slate-100 text-slate-500 hover:bg-slate-200"
+                                      )}
+                                    >
+                                      {size}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            )}
                         </div>
                         <button
                           onClick={() => addToCart(product)}
@@ -470,7 +517,7 @@ export default function PurchaseForm() {
               {cart.map(item => (
                 <motion.div 
                   layout
-                  key={item.productId}
+                  key={`${item.productId}-${item.size || 'no-size'}`}
                   initial={{ opacity: 0, x: -20 }}
                   animate={{ opacity: 1, x: 0 }}
                   exit={{ opacity: 0, x: -20 }}
@@ -491,13 +538,16 @@ export default function PurchaseForm() {
                       {item.name}
                     </p>
                     <div className="flex items-center gap-2 mt-1">
+                      <span className="text-[9px] font-bold text-slate-400">SKU: {item.sku}</span>
+                    </div>
+                    <div className="flex items-center gap-2 mt-1">
                       <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Custo:</span>
                       <div className="relative">
                         <input 
                           type="number"
                           step="0.01"
                           value={item.price || ''}
-                          onChange={(e) => updatePrice(item.productId, Number(e.target.value))}
+                          onChange={(e) => updatePrice(item.productId, item.size, Number(e.target.value))}
                           className="w-20 bg-white border border-slate-200 rounded-lg px-2 py-0.5 text-[10px] font-black text-accent outline-none"
                         />
                       </div>
@@ -507,14 +557,14 @@ export default function PurchaseForm() {
                   <div className="flex items-center gap-3">
                     <div className="flex items-center bg-white rounded-xl p-1 shadow-sm border border-slate-100">
                       <button 
-                        onClick={() => updateQuantity(item.productId, item.quantity - 1)} 
+                        onClick={() => updateQuantity(item.productId, item.size, item.quantity - 1)} 
                         className="w-8 h-8 flex items-center justify-center bg-slate-50 text-slate-400 rounded-lg hover:text-danger transition-colors"
                       >
                         <Minus className="w-3.5 h-3.5" />
                       </button>
                       <span className="w-8 text-center text-xs font-black text-slate-800">{item.quantity}</span>
                       <button 
-                        onClick={() => updateQuantity(item.productId, item.quantity + 1)} 
+                        onClick={() => updateQuantity(item.productId, item.size, item.quantity + 1)} 
                         className="w-8 h-8 flex items-center justify-center bg-slate-50 text-slate-400 rounded-lg hover:text-accent transition-colors"
                       >
                         <Plus className="w-3.5 h-3.5" />
@@ -522,7 +572,7 @@ export default function PurchaseForm() {
                     </div>
                     
                     <button 
-                      onClick={() => removeFromCart(item.productId)}
+                      onClick={() => removeFromCart(item.productId, item.size)}
                       className="p-2 text-slate-300 hover:text-danger transition-colors"
                     >
                       <Trash2 className="w-4 h-4" />
@@ -543,23 +593,34 @@ export default function PurchaseForm() {
         {/* Purchase Info & Payment */}
         <div className="p-4 bg-slate-50 rounded-b-[40px] space-y-3 shadow-[0_-10px_20px_rgba(0,0,0,0.02)]">
           <div className="space-y-3">
-             <div className="flex flex-col gap-1 px-1">
-               <p className="text-[9px] font-bold text-slate-400 uppercase mb-1 pl-1">Fornecedor</p>
-               <select 
-                 value={selectedSupplierId}
-                 onChange={(e) => {
-                   const id = e.target.value;
-                   setSelectedSupplierId(id);
-                   const supplier = suppliers.find(s => s.id === id);
-                   setSelectedSupplierName(supplier?.name || '');
-                 }}
-                 className="w-full px-3 py-2 bg-white border border-gray-100 rounded-xl text-xs font-bold text-slate-700 outline-none focus:ring-1 focus:ring-accent"
-               >
-                 <option value="">Selecione um Fornecedor</option>
-                 {suppliers.map(s => (
-                   <option key={s.id} value={s.id}>{s.name}</option>
-                 ))}
-               </select>
+             <div className="grid grid-cols-2 gap-3">
+               <div className="flex flex-col gap-1">
+                 <p className="text-[9px] font-bold text-slate-400 uppercase mb-1 pl-1">Data da Compra</p>
+                 <input 
+                   type="datetime-local"
+                   value={purchaseDate}
+                   onChange={(e) => setPurchaseDate(e.target.value)}
+                   className="w-full px-3 py-2 bg-white border border-gray-100 rounded-xl text-xs font-bold text-slate-700 outline-none focus:ring-1 focus:ring-accent"
+                 />
+               </div>
+               <div className="flex flex-col gap-1">
+                 <p className="text-[9px] font-bold text-slate-400 uppercase mb-1 pl-1">Fornecedor</p>
+                 <select 
+                   value={selectedSupplierId}
+                   onChange={(e) => {
+                     const id = e.target.value;
+                     setSelectedSupplierId(id);
+                     const supplier = suppliers.find(s => s.id === id);
+                     setSelectedSupplierName(supplier?.name || '');
+                   }}
+                   className="w-full px-3 py-2 bg-white border border-gray-100 rounded-xl text-xs font-bold text-slate-700 outline-none focus:ring-1 focus:ring-accent"
+                 >
+                   <option value="">Selecione um Fornecedor</option>
+                   {suppliers.map(s => (
+                     <option key={s.id} value={s.id}>{s.name}</option>
+                   ))}
+                 </select>
+               </div>
              </div>
 
              <div className="grid grid-cols-2 gap-3">

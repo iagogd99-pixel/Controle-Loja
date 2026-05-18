@@ -24,7 +24,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '@/src/lib/firebase';
 import { Product } from '@/src/types';
-import { cn } from '@/src/lib/utils';
+import { cn, sortSizes } from '@/src/lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -37,6 +37,7 @@ const schema = z.object({
   brand: z.string().optional(),
   description: z.string().optional(),
   size: z.string().optional(),
+  sizes: z.array(z.string()).optional(),
   color: z.string().optional(),
   gender: z.string().optional(),
   stock: z.number().min(0, 'Estoque não pode ser negativo'),
@@ -55,16 +56,18 @@ export default function ProductForm() {
   const [loading, setLoading] = useState(false);
   const [fetching, setFetching] = useState(false);
   const [images, setImages] = useState<string[]>([]);
+  const [selectedSizes, setSelectedSizes] = useState<string[]>([]);
   const [categories, setCategories] = useState<{id: string, name: string, type: string}[]>([]);
   
-  const { register, handleSubmit, reset, formState: { errors }, watch } = useForm<FormData>({
+  const { register, handleSubmit, reset, formState: { errors }, watch, setValue } = useForm<FormData>({
     resolver: zodResolver(schema),
     defaultValues: {
       status: 'active',
       stock: 0,
       minStock: 5,
       costPrice: 0,
-      salePrice: 0
+      salePrice: 0,
+      sizes: []
     }
   });
 
@@ -86,6 +89,7 @@ export default function ProductForm() {
           const data = docSnap.data();
           reset(data as FormData);
           setImages(data.images || []);
+          setSelectedSizes(data.sizes || (data.size ? [data.size] : []));
         }
         setFetching(false);
       };
@@ -117,6 +121,7 @@ export default function ProductForm() {
     try {
       const payload = {
         ...data,
+        sizes: selectedSizes,
         images,
         updatedAt: new Date().toISOString(),
       };
@@ -239,46 +244,75 @@ export default function ProductForm() {
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1">
-                <label className="text-[11px] font-bold text-slate-600 uppercase ml-1">Tamanho</label>
-                <select {...register('size')} className="form-input py-2.5 text-sm bg-slate-50 border-none">
-                   <option value="">Nenhum</option>
-                   {categories.filter(c => c.type === 'tamanho').map(c => (
-                     <option key={c.id} value={c.name}>{c.name}</option>
-                   ))}
-                </select>
+            <div className="grid grid-cols-1 gap-4">
+              <div className="space-y-3">
+                <label className="text-[11px] font-bold text-slate-600 uppercase ml-1">Tamanhos Disponíveis</label>
+                <div className="flex flex-wrap gap-2">
+                  {(() => {
+                    const sizeCats = categories.filter(c => c.type === 'tamanho');
+                    const sortedSizeNames = sortSizes(sizeCats.map(c => c.name));
+                    return sortedSizeNames.map(name => {
+                      const c = sizeCats.find(cat => cat.name === name);
+                      if (!c) return null;
+                      const isSelected = selectedSizes.includes(c.name);
+                      return (
+                        <button
+                          key={c.id}
+                          type="button"
+                          onClick={() => {
+                            if (isSelected) {
+                              setSelectedSizes(prev => prev.filter(s => s !== c.name));
+                            } else {
+                              setSelectedSizes(prev => [...prev, c.name]);
+                            }
+                          }}
+                          className={cn(
+                            "px-4 py-2 rounded-xl text-xs font-black transition-all border",
+                            isSelected 
+                              ? "bg-accent border-accent text-white shadow-lg shadow-accent/20" 
+                              : "bg-slate-50 border-slate-100 text-slate-500 hover:border-accent/30"
+                          )}
+                        >
+                          {c.name}
+                        </button>
+                      );
+                    });
+                  })()}
+                  {categories.filter(c => c.type === 'tamanho').length === 0 && (
+                    <p className="text-[10px] text-slate-400 italic">Nenhum tamanho cadastrado em Configurações</p>
+                  )}
+                </div>
               </div>
-              <div className="space-y-1">
-                <label className="text-[11px] font-bold text-slate-600 uppercase ml-1">Cor</label>
-                <select {...register('color')} className="form-input py-2.5 text-sm bg-slate-50 border-none">
-                   <option value="">Nenhuma</option>
-                   {categories.filter(c => c.type === 'cor').map(c => (
-                     <option key={c.id} value={c.name}>{c.name}</option>
-                   ))}
-                </select>
-              </div>
-            </div>
 
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1">
-                <label className="text-[11px] font-bold text-slate-600 uppercase ml-1">Gênero</label>
-                <select {...register('gender')} className="form-input py-2.5 text-sm bg-slate-50 border-none">
-                   <option value="">Nenhum</option>
-                   <option value="Masculino">Masculino</option>
-                   <option value="Feminino">Feminino</option>
-                   <option value="Unissex">Unissex</option>
-                   {categories.filter(c => c.type === 'gênero').map(c => (
-                     <option key={c.id} value={c.name}>{c.name}</option>
-                   ))}
-                </select>
-              </div>
-              <div className="space-y-1">
-                <label className="text-[11px] font-bold text-slate-600 uppercase ml-1">Status</label>
-                <select {...register('status')} className="form-input py-2.5 text-sm bg-slate-50 border-none">
-                  <option value="active">Ativo</option>
-                  <option value="inactive">Inativo</option>
-                </select>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <label className="text-[11px] font-bold text-slate-600 uppercase ml-1">Cor Principal</label>
+                  <select {...register('color')} className="form-input py-2.5 text-sm bg-slate-50 border-none">
+                     <option value="">Nenhuma</option>
+                     {categories.filter(c => c.type === 'cor').map(c => (
+                       <option key={c.id} value={c.name}>{c.name}</option>
+                     ))}
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[11px] font-bold text-slate-600 uppercase ml-1">Gênero</label>
+                  <select {...register('gender')} className="form-input py-2.5 text-sm bg-slate-50 border-none">
+                     <option value="">Nenhum</option>
+                     <option value="Masculino">Masculino</option>
+                     <option value="Feminino">Feminino</option>
+                     <option value="Unissex">Unissex</option>
+                     {categories.filter(c => c.type === 'gênero').map(c => (
+                       <option key={c.id} value={c.name}>{c.name}</option>
+                     ))}
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[11px] font-bold text-slate-600 uppercase ml-1">Status</label>
+                  <select {...register('status')} className="form-input py-2.5 text-sm bg-slate-50 border-none">
+                    <option value="active">Ativo</option>
+                    <option value="inactive">Inativo</option>
+                  </select>
+                </div>
               </div>
             </div>
           </div>

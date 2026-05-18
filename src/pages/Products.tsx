@@ -27,12 +27,13 @@ import {
 } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '@/src/lib/firebase';
 import { Product, Movement } from '@/src/types';
-import { formatCurrency, cn } from '@/src/lib/utils';
+import { formatCurrency, cn, getProductSku, sortSizes } from '@/src/lib/utils';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 
 export default function Products() {
   const [products, setProducts] = useState<Product[]>([]);
+  const [allSizes, setAllSizes] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('Todas');
@@ -49,19 +50,31 @@ export default function Products() {
       navigate('/produtos/novo' + (returnTo ? `?returnTo=${encodeURIComponent(returnTo)}` : ''));
     }
 
-    const q = query(collection(db, 'products'), orderBy('createdAt', 'desc'));
+    const q = query(collection(db, 'products'), orderBy('name', 'asc'));
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const prods = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Product));
       setProducts(prods);
       
-      const uniqueCats = Array.from(new Set(prods.map(p => p.category))).filter(Boolean);
+      const uniqueCats = Array.from(new Set(prods.map(p => p.category))).filter(Boolean).sort();
       setCategories(['Todas', ...uniqueCats]);
       setLoading(false);
     }, (error) => {
       handleFirestoreError(error, OperationType.LIST, 'products');
     });
 
-    return () => unsubscribe();
+    const sizesQuery = query(collection(db, 'categories'), orderBy('name', 'asc'));
+    const unsubscribeSizes = onSnapshot(sizesQuery, (snapshot) => {
+      const sizes = snapshot.docs
+        .map(doc => doc.data())
+        .filter(d => d.type === 'tamanho')
+        .map(d => d.name);
+      setAllSizes(sortSizes(sizes));
+    });
+
+    return () => {
+      unsubscribe();
+      unsubscribeSizes();
+    };
   }, []);
 
   useEffect(() => {
@@ -203,7 +216,36 @@ export default function Products() {
                <h3 className="text-[9px] font-black text-slate-800 dark:text-slate-100 leading-tight line-clamp-1 uppercase tracking-tighter mb-0.5">
                  {product.name}
                </h3>
-               <div className="flex items-center justify-between mt-auto">
+               
+               <div className="flex flex-wrap gap-1 mb-2">
+                 {allSizes.length > 0 ? (
+                   allSizes.map(size => {
+                     const isAvailable = product.sizes?.includes(size) || product.size === size;
+                     return (
+                       <div 
+                         key={size}
+                         className={cn(
+                           "min-w-[16px] h-4 px-1 flex items-center justify-center rounded-[4px] border text-[7px] font-bold uppercase transition-all relative",
+                           isAvailable 
+                             ? "bg-slate-50 border-slate-200 text-slate-700" 
+                             : "bg-transparent border-slate-100 text-slate-300 opacity-40 overflow-hidden"
+                         )}
+                       >
+                         {size}
+                         {!isAvailable && (
+                           <div className="absolute inset-0 flex items-center justify-center">
+                             <div className="w-full h-[1px] bg-slate-300 -rotate-45" />
+                           </div>
+                         )}
+                       </div>
+                     );
+                   })
+                 ) : (
+                   <span className="text-[7px] text-slate-400 font-bold uppercase">{product.size}</span>
+                 )}
+               </div>
+
+               <div className="flex items-center justify-between mt-auto pt-2 border-t border-slate-50 dark:border-slate-800">
                  <span className="text-[10px] font-black text-accent">{formatCurrency(product.salePrice)}</span>
                  <span className={cn(
                    "text-[8px] font-bold",
@@ -212,8 +254,8 @@ export default function Products() {
                    {product.stock} un
                  </span>
                </div>
-            </div>
-          </motion.button>
+             </div>
+           </motion.button>
         ))}
       </div>
 
@@ -284,6 +326,40 @@ export default function Products() {
                       icon={Boxes}
                     />
                     <DetailItem label="Estoque Mínimo" value={`${selectedProduct.minStock} un`} icon={AlertCircle} />
+                  </div>
+
+                  <div className="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-2xl border border-slate-100 dark:border-slate-800">
+                    <h4 className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest mb-3 flex items-center gap-1">
+                      <Tag className="w-3 h-3" /> Tamanhos Disponíveis
+                    </h4>
+                    <div className="flex flex-wrap gap-2">
+                       {allSizes.map(size => {
+                         const isAvailable = selectedProduct.sizes?.includes(size) || selectedProduct.size === size;
+                         return (
+                           <div 
+                             key={size}
+                             className={cn(
+                               "w-12 h-14 flex flex-col items-center justify-center rounded-xl border text-[10px] font-black uppercase transition-all relative overflow-hidden",
+                               isAvailable 
+                                 ? "bg-white border-primary text-primary shadow-sm" 
+                                 : "bg-transparent border-slate-100 text-slate-300 opacity-40"
+                             )}
+                           >
+                             <span className="text-[10px]">{size}</span>
+                             {isAvailable && (
+                               <span className="text-[6px] font-bold text-slate-400 mt-0.5">
+                                 {getProductSku(selectedProduct.sku, size)}
+                               </span>
+                             )}
+                             {!isAvailable && (
+                               <div className="absolute inset-0 flex items-center justify-center">
+                                 <div className="w-full h-[1px] bg-slate-300 -rotate-45" />
+                               </div>
+                             )}
+                           </div>
+                         );
+                       })}
+                    </div>
                   </div>
 
                   {selectedProduct.description && (

@@ -31,10 +31,12 @@ import {
 import { db } from '@/src/lib/firebase';
 import { useAuth } from '@/src/contexts/AuthContext';
 import { Product, SaleItem, Client } from '@/src/types';
-import { formatCurrency, cn } from '@/src/lib/utils';
+import { formatCurrency, cn, getProductSku, sortSizes } from '@/src/lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
+import { useNavigate } from 'react-router-dom';
 
 export default function Sales() {
+  const navigate = useNavigate();
   const { profile } = useAuth();
   const [products, setProducts] = useState<Product[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
@@ -65,28 +67,40 @@ export default function Sales() {
 
   const filteredProducts = products.filter(p => 
     p.status === 'active' && 
-    (p.name.toLowerCase().includes(searchTerm.toLowerCase()) || p.sku.toLowerCase().includes(searchTerm.toLowerCase()))
+    (
+      p.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
+      p.sku.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      p.sizes?.some(s => getProductSku(p.sku, s).toLowerCase().includes(searchTerm.toLowerCase()))
+    )
   );
 
-  const addToCart = (product: Product, quantity: number = 1) => {
+  const addToCart = (product: Product, size?: string, quantity: number = 1) => {
     if (product.stock <= 0) return;
     
+    // If product has multiple sizes and none selected, we'll handle that in UI
+    // But for safety, we fallback to product.size or none
+    const finalSize = size || product.size;
+    const itemSku = getProductSku(product.sku, finalSize);
+    const cartItemId = `${product.id}-${finalSize || 'no-size'}`;
+    
     setCart(prev => {
-      const existing = prev.find(item => item.productId === product.id);
+      const existing = prev.find(item => `${item.productId}-${item.size || 'no-size'}` === cartItemId);
       if (existing) {
         if (existing.quantity + quantity > product.stock) {
           alert('Limite de estoque atingido');
           return prev;
         }
         return prev.map(item => 
-          item.productId === product.id 
+          `${item.productId}-${item.size || 'no-size'}` === cartItemId 
             ? { ...item, quantity: item.quantity + quantity, total: (item.quantity + quantity) * item.price } 
             : item
         );
       }
       return [...prev, { 
         productId: product.id, 
-        name: product.name, 
+        sku: itemSku,
+        size: finalSize,
+        name: product.name + (finalSize ? ` (${finalSize})` : ''), 
         price: product.salePrice, 
         costPrice: product.costPrice || 0,
         quantity: quantity, 
@@ -97,11 +111,12 @@ export default function Sales() {
     setSelectedProduct(null);
   };
 
-  const updateQuantity = (id: string, delta: number) => {
+  const updateQuantity = (productId: string, size: string | undefined, delta: number) => {
+    const cartItemId = `${productId}-${size || 'no-size'}`;
     setCart(prev => prev.map(item => {
-      if (item.productId === id) {
+      if (`${item.productId}-${(item as any).size || 'no-size'}` === cartItemId) {
         const newQty = Math.max(0, item.quantity + delta);
-        const product = products.find(p => p.id === id);
+        const product = products.find(p => p.id === productId);
         if (product && newQty > product.stock) return item;
         return { ...item, quantity: newQty, total: newQty * item.price };
       }
@@ -239,6 +254,7 @@ export default function Sales() {
             Nova Venda
           </button>
           <button 
+            onClick={() => navigate('/historico-vendas')}
             className="px-8 py-3 bg-white border border-gray-200 text-slate-700 font-bold rounded-xl"
           >
             Ver Histórico
@@ -313,7 +329,14 @@ export default function Sales() {
                         </div>
                         <div className="flex-1 min-w-0">
                           <p className="text-sm font-black text-slate-800 leading-tight uppercase truncate">{product.name}</p>
-                          <div className="flex items-center gap-3 mt-0.5">
+                          <div className="flex flex-wrap gap-1 mt-1">
+                            {sortSizes(product.sizes || (product.size ? [product.size] : [])).map(size => (
+                              <span key={size} className="px-1.5 py-0.5 bg-slate-100 text-[8px] font-bold text-slate-500 rounded uppercase">
+                                {size}
+                              </span>
+                            ))}
+                          </div>
+                          <div className="flex items-center gap-3 mt-1">
                             <span className="text-[10px] font-bold text-slate-400">SKU: {product.sku}</span>
                             <span className={cn(
                               "text-[10px] font-bold",
@@ -322,7 +345,34 @@ export default function Sales() {
                           </div>
                         </div>
                         <div className="flex items-center gap-4">
-                          <span className="text-sm font-black text-accent">{formatCurrency(product.salePrice)}</span>
+                          <div className="flex flex-col items-end gap-1">
+                            <span className="text-sm font-black text-accent">{formatCurrency(product.salePrice)}</span>
+                            {product.sizes && product.sizes.length > 0 && (
+                              <div className="flex flex-wrap justify-end gap-1 max-w-[150px]">
+                                {sortSizes(product.sizes).map(size => {
+                                  const itemSku = getProductSku(product.sku, size);
+                                  const isMatched = itemSku.toLowerCase().includes(searchTerm.toLowerCase());
+                                  return (
+                                    <button
+                                      key={size}
+                                      onClick={() => {
+                                        addToCart(product, size);
+                                        setSearchTerm('');
+                                      }}
+                                      className={cn(
+                                        "px-2 py-1 rounded-sm text-[8px] font-black uppercase transition-all",
+                                        isMatched
+                                          ? "bg-accent text-white shadow-sm"
+                                          : "bg-slate-100 text-slate-500 hover:bg-slate-200"
+                                      )}
+                                    >
+                                      {size}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </div>
                           <button
                             onClick={() => {
                               addToCart(product);
@@ -436,22 +486,25 @@ export default function Sales() {
                     <p className="text-xs font-black text-slate-800 uppercase leading-tight truncate">
                       {item.name}
                     </p>
-                    <p className="text-[11px] font-bold text-accent mt-1">
-                      {formatCurrency(item.price)}
-                    </p>
+                    <div className="flex items-center gap-2 mt-1">
+                      <span className="text-[9px] font-bold text-slate-400">SKU: {item.sku}</span>
+                      <span className="text-[10px] font-bold text-accent">
+                        {formatCurrency(item.price)}
+                      </span>
+                    </div>
                   </div>
 
                   <div className="flex items-center gap-3">
                     <div className="flex items-center bg-white rounded-xl p-1 shadow-sm border border-slate-100">
                       <button 
-                        onClick={() => updateQuantity(item.productId, -1)} 
+                        onClick={() => updateQuantity(item.productId, (item as any).size, -1)} 
                         className="w-8 h-8 flex items-center justify-center bg-slate-50 text-slate-400 rounded-lg hover:text-danger transition-colors"
                       >
                         <Minus className="w-3.5 h-3.5" />
                       </button>
                       <span className="w-8 text-center text-xs font-black text-slate-800">{item.quantity}</span>
                       <button 
-                        onClick={() => updateQuantity(item.productId, 1)} 
+                        onClick={() => updateQuantity(item.productId, (item as any).size, 1)} 
                         className="w-8 h-8 flex items-center justify-center bg-slate-50 text-slate-400 rounded-lg hover:text-accent transition-colors"
                       >
                         <Plus className="w-3.5 h-3.5" />

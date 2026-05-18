@@ -20,6 +20,7 @@ export interface Product {
   category: string;
   brand: string;
   size: string;
+  sizes: string[];
   color: string;
   gender: string;
   stock: number;
@@ -68,6 +69,8 @@ export interface Supplier {
 
 export interface SaleItem {
   productId: string;
+  sku: string;
+  size?: string;
   name: string;
   price: number;
   costPrice: number; // Added to track profit
@@ -98,6 +101,8 @@ export interface Sale {
 
 export interface PurchaseItem {
   productId: string;
+  sku: string;
+  size?: string;
   name: string;
   price: number;
   quantity: number;

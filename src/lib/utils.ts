@@ -22,3 +22,23 @@ export function formatDate(date: Date | string) {
     minute: '2-digit',
   }).format(d);
 }
+
+export function getProductSku(baseSku: string, size?: string) {
+  if (!size) return baseSku;
+  return `${baseSku}.${size}`;
+}
+
+export function sortSizes(sizes: string[]) {
+  return [...sizes].sort((a, b) => {
+    const numA = parseInt(a, 10);
+    const numB = parseInt(b, 10);
+
+    // If both are numbers, sort numerically
+    if (!isNaN(numA) && !isNaN(numB)) {
+      return numA - numB;
+    }
+
+    // Otherwise fallback to alphanumeric sorting
+    return a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' });
+  });
+}

@@ -6,7 +6,8 @@ import {
   Tag,
   Maximize2,
   Palette,
-  Users
+  Users,
+  Lock
 } from 'lucide-react';
 import { 
   collection, 
@@ -19,7 +20,8 @@ import {
   serverTimestamp 
 } from 'firebase/firestore';
 import { db } from '@/src/lib/firebase';
-import { cn } from '@/src/lib/utils';
+import { useAuth } from '@/src/contexts/AuthContext';
+import { cn, sortSizes } from '@/src/lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
 
 interface Category {
@@ -43,8 +45,47 @@ const CATEGORY_TYPES: CategoryType[] = [
 ];
 
 export default function Categories() {
+  const { isAdmin, verifyPassword } = useAuth();
   const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
+
+  // Password Verification State
+  const [showPasswordPrompt, setShowPasswordPrompt] = useState(false);
+  const [passwordInput, setPasswordInput] = useState('');
+  const [verifyingPassword, setVerifyingPassword] = useState(false);
+  const [pendingAction, setPendingAction] = useState<() => void>(() => {});
+
+  const handleDeleteClick = (id: string) => {
+    const action = async () => {
+      try {
+        await deleteDoc(doc(db, 'categories', id));
+      } catch (error) {
+        console.error(error);
+        alert('Erro ao excluir item');
+      }
+    };
+
+    if (isAdmin) {
+      setPendingAction(() => action);
+      setShowPasswordPrompt(true);
+    } else {
+      alert('Acesso restrito a administradores');
+    }
+  };
+
+  const confirmPassword = async () => {
+    setVerifyingPassword(true);
+    const isValid = await verifyPassword(passwordInput);
+    setVerifyingPassword(false);
+    
+    if (isValid) {
+      setShowPasswordPrompt(false);
+      setPasswordInput('');
+      pendingAction();
+    } else {
+      alert('Senha incorreta');
+    }
+  };
 
   useEffect(() => {
     const q = query(collection(db, 'categories'), orderBy('name', 'asc'));
@@ -70,14 +111,79 @@ export default function Categories() {
           <p className="text-[10px] text-slate-400 uppercase font-bold tracking-widest mt-1">Gestão de Atributos</p>
         </div>
       </div>
-      {CATEGORY_TYPES.map((type) => (
-        <CategorySection 
-          key={type.id}
-          type={type}
-          categories={categories.filter(c => c.type === type.id)}
-          loading={loading}
-        />
-      ))}
+      {CATEGORY_TYPES.map((type) => {
+        let filteredCategories = categories.filter(c => c.type === type.id);
+        if (type.id === 'tamanho') {
+          const sizeNames = filteredCategories.map(c => c.name);
+          const sortedNames = sortSizes(sizeNames);
+          filteredCategories = sortedNames.map(name => filteredCategories.find(c => c.name === name)!).filter(Boolean);
+        }
+        
+        return (
+          <CategorySection 
+            key={type.id}
+            type={type}
+            categories={filteredCategories}
+            loading={loading}
+            onDelete={handleDeleteClick}
+          />
+        );
+      })}
+
+      {/* Password Verification Modal */}
+      <AnimatePresence>
+        {showPasswordPrompt && (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowPasswordPrompt(false)}
+              className="absolute inset-0 bg-slate-900/60 backdrop-blur-md"
+            />
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-white rounded-[32px] shadow-2xl w-full max-w-xs overflow-hidden relative z-10 p-8 text-center"
+            >
+              <div className="w-16 h-16 bg-accent/10 rounded-2xl flex items-center justify-center text-accent mx-auto mb-6">
+                <Lock className="w-8 h-8" />
+              </div>
+              <h2 className="text-xl font-black text-slate-800 uppercase tracking-tighter mb-2">Acesso Restrito</h2>
+              <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-6">Confirme sua senha de Admin para continuar</p>
+              
+              <div className="space-y-4">
+                <input 
+                  type="password"
+                  value={passwordInput}
+                  onChange={(e) => setPasswordInput(e.target.value)}
+                  placeholder="Sua senha..."
+                  className="w-full bg-slate-50 border-none rounded-2xl px-6 py-4 text-center font-bold outline-none focus:ring-2 focus:ring-accent/20 transition-all text-slate-900"
+                  autoFocus
+                  onKeyDown={(e) => e.key === 'Enter' && confirmPassword()}
+                />
+                
+                <div className="flex flex-col gap-2">
+                  <button 
+                    onClick={confirmPassword}
+                    disabled={verifyingPassword}
+                    className="w-full py-4 bg-accent text-white font-black rounded-2xl text-[10px] uppercase shadow-lg shadow-accent/20 transition-all hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50"
+                  >
+                    {verifyingPassword ? 'Verificando...' : 'Confirmar Acesso'}
+                  </button>
+                  <button 
+                    onClick={() => setShowPasswordPrompt(false)}
+                    className="w-full py-4 bg-slate-50 text-slate-400 font-black rounded-2xl text-[10px] uppercase"
+                  >
+                    Cancelar
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
@@ -86,9 +192,10 @@ interface CategorySectionProps {
   type: CategoryType;
   categories: Category[];
   loading: boolean;
+  onDelete: (id: string) => void;
 }
 
-const CategorySection: React.FC<CategorySectionProps> = ({ type, categories, loading }) => {
+const CategorySection: React.FC<CategorySectionProps> = ({ type, categories, loading, onDelete }) => {
   const [newCategoryName, setNewCategoryName] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
@@ -108,15 +215,6 @@ const CategorySection: React.FC<CategorySectionProps> = ({ type, categories, loa
       console.error(error);
     } finally {
       setSubmitting(false);
-    }
-  };
-
-  const handleDelete = async (id: string) => {
-    if (!confirm('Tem certeza que deseja excluir este item?')) return;
-    try {
-      await deleteDoc(doc(db, 'categories', id));
-    } catch (error) {
-      console.error(error);
     }
   };
 
@@ -160,7 +258,7 @@ const CategorySection: React.FC<CategorySectionProps> = ({ type, categories, loa
             >
               <span className="text-sm font-medium text-slate-900">{cat.name}</span>
               <button 
-                onClick={() => handleDelete(cat.id)}
+                onClick={() => onDelete(cat.id)}
                 className="p-1 text-slate-400 hover:text-danger rounded-md transition-colors"
               >
                 <Trash2 className="w-4 h-4" />

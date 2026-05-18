@@ -16,8 +16,14 @@ import {
   XCircle,
   Trash2,
   Plus,
+  Lock,
+  Loader2,
+  Save,
+  FileDown,
   ShoppingCart as ShoppingCartIcon
 } from 'lucide-react';
+import { jsPDF } from 'jspdf';
+import html2canvas from 'html2canvas';
 import { 
   collection, 
   onSnapshot, 
@@ -38,10 +44,81 @@ import { motion, AnimatePresence } from 'motion/react';
 import { useAuth } from '@/src/contexts/AuthContext';
 
 export default function SalesHistory() {
-  const { isAdmin, profile } = useAuth();
+  const { isAdmin, profile, verifyPassword } = useAuth();
   const [sales, setSales] = useState<Sale[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedSale, setSelectedSale] = useState<Sale | null>(null);
+  const [editingSale, setEditingSale] = useState<Sale | null>(null);
+  
+  // Password Verification State
+  const [showPasswordPrompt, setShowPasswordPrompt] = useState(false);
+  const [passwordInput, setPasswordInput] = useState('');
+  const [verifyingPassword, setVerifyingPassword] = useState(false);
+  const [pendingAction, setPendingAction] = useState<() => void>(() => {});
+
+  const [editForm, setEditForm] = useState({
+    timestamp: '',
+    customerName: '',
+    paymentMethod: '' as any,
+    paymentStatus: '' as any,
+    total: 0
+  });
+
+  const handleStartEdit = (sale: Sale) => {
+    const action = () => {
+      setEditingSale(sale);
+      setEditForm({
+        timestamp: sale.timestamp.slice(0, 16), // datetime-local format
+        customerName: sale.customerName || '',
+        paymentMethod: sale.paymentMethod,
+        paymentStatus: sale.paymentStatus,
+        total: sale.total
+      });
+    };
+
+    if (isAdmin) {
+      setPendingAction(() => action);
+      setShowPasswordPrompt(true);
+    } else {
+      alert('Acesso restrito a administradores');
+    }
+  };
+
+  const confirmPassword = async () => {
+    setVerifyingPassword(true);
+    const isValid = await verifyPassword(passwordInput);
+    setVerifyingPassword(false);
+    
+    if (isValid) {
+      setShowPasswordPrompt(false);
+      setPasswordInput('');
+      pendingAction();
+    } else {
+      alert('Senha incorreta');
+    }
+  };
+
+  const handleUpdateSale = async () => {
+    if (!editingSale) return;
+    try {
+      setLoading(true);
+      await updateDoc(doc(db, 'sales', editingSale.id), {
+        timestamp: new Date(editForm.timestamp).toISOString(),
+        customerName: editForm.customerName,
+        paymentMethod: editForm.paymentMethod,
+        paymentStatus: editForm.paymentStatus,
+        total: editForm.total
+      });
+      alert('Venda atualizada com sucesso!');
+      setEditingSale(null);
+      setSelectedSale(null);
+    } catch (err) {
+      console.error(err);
+      alert('Erro ao atualizar venda');
+    } finally {
+      setLoading(false);
+    }
+  };
   const [searchTerm, setSearchTerm] = useState('');
   const [showFilters, setShowFilters] = useState(false);
   const [filters, setFilters] = useState({
@@ -64,81 +141,118 @@ export default function SalesHistory() {
 
   const handleDelete = async (sale: Sale, e?: React.MouseEvent) => {
     e?.stopPropagation();
-    alert('Tentando excluir venda: ' + sale.id);
-    
-    console.log('DEBUG: Iniciando handleDelete para', sale.id);
-    
-    if (!profile) {
-      alert('Aguardando carregamento do perfil para excluir...');
+
+    const action = async () => {
+      alert('Tentando excluir venda: ' + sale.id);
+      
+      console.log('DEBUG: Iniciando handleDelete para', sale.id);
+      
+      if (!profile) {
+        alert('Aguardando carregamento do perfil para excluir...');
+        return;
+      }
+      
+      try {
+        setLoading(true);
+        const batch = writeBatch(db);
+        console.log('Iniciando estorno de itens para venda:', sale.id);
+        
+        for (const item of sale.items) {
+          if (!item.productId) continue;
+
+          const productRef = doc(db, 'products', item.productId);
+          try {
+            const productSnap = await getDoc(productRef);
+            if (productSnap.exists()) {
+              batch.update(productRef, {
+                stock: increment(item.quantity)
+              });
+            }
+          } catch (e) {
+            console.warn(`Erro ao buscar produto ${item.productId}:`, e);
+          }
+          
+          const movementRef = doc(collection(db, 'movements'));
+          batch.set(movementRef, {
+            productId: item.productId,
+            productName: item.name,
+            type: 'in',
+            quantity: item.quantity,
+            reason: 'Estorno: Venda cancelada ' + sale.id,
+            userId: profile?.uid || 'system',
+            userName: profile?.name || 'Sistema',
+            timestamp: new Date().toISOString()
+          });
+        }
+
+        const saleRef = doc(db, 'sales', sale.id);
+        batch.delete(saleRef);
+
+        await batch.commit();
+        alert('Venda cancelada com sucesso!');
+        setSelectedSale(null);
+      } catch (err: any) {
+        console.error('ERRO FATAL AO CANCELAR VENDA:', err);
+        alert('Erro ao cancelar venda: ' + err.message);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    if (isAdmin) {
+      setPendingAction(() => action);
+      setShowPasswordPrompt(true);
+    } else {
+      alert('Acesso restrito a administradores');
+    }
+  };
+
+  const handleDownloadPDF = async (sale: Sale) => {
+    const element = document.getElementById(`receipt-to-print`);
+    if (!element) {
+      alert('Selecione uma venda primeiro');
       return;
     }
     
-    console.log('Botão excluir pressionado. ID Venda:', sale.id);
-    console.log('Perfil atual:', profile);
-
-    // Temporariamente removendo confirm para testar se ele está bloqueando
-    /*
-    if (!confirm(`Deseja cancelar a venda ${sale.id}? Esta ação devolverá os itens ao estoque e NÃO pode ser desfeita.`)) {
-      return;
-    }
-    */
-
     try {
       setLoading(true);
-      const batch = writeBatch(db);
-      console.log('Iniciando estorno de itens para venda:', sale.id);
+      // Wait a bit for images to load if any
+      await new Promise(resolve => setTimeout(resolve, 500));
       
-      // 1. Process items (Return to stock)
-      for (const item of sale.items) {
-        if (!item.productId) continue;
-
-        const productRef = doc(db, 'products', item.productId);
-        // We do a getDoc to ensure it exists, but we catch errors individualy
-        try {
-          const productSnap = await getDoc(productRef);
-          if (productSnap.exists()) {
-            batch.update(productRef, {
-              stock: increment(item.quantity)
-            });
-          }
-        } catch (e) {
-          console.warn(`Erro ao buscar produto ${item.productId}:`, e);
-        }
-        
-        // Add movement record
-        const movementRef = doc(collection(db, 'movements'));
-        batch.set(movementRef, {
-          productId: item.productId,
-          productName: item.name,
-          type: 'in',
-          quantity: item.quantity,
-          reason: 'Estorno: Venda cancelada ' + sale.id,
-          userId: profile?.uid || 'system',
-          userName: profile?.name || 'Sistema',
-          timestamp: new Date().toISOString()
-        });
-      }
-
-      // 2. Delete sale doc
-      const saleRef = doc(db, 'sales', sale.id);
-      batch.delete(saleRef);
-
-      await batch.commit();
-      alert('Venda cancelada com sucesso!');
-      setSelectedSale(null);
-    } catch (err: any) {
-      console.error('ERRO FATAL AO CANCELAR VENDA:', err);
+      const canvas = await html2canvas(element, {
+        scale: 3, // Higher scale for better quality
+        useCORS: true,
+        backgroundColor: '#ffffff',
+        logging: false
+      });
       
-      let msg = 'Não foi possível cancelar a venda.';
-      if (err?.code === 'permission-denied' || (err?.message && err.message.includes('permission-denied'))) {
-        msg = 'Erro de Permissão: Verifique se você tem autorização no banco de dados.';
-      } else {
-        msg += '\nDetalhes: ' + (err?.message || err?.code || JSON.stringify(err));
-      }
-      alert(msg);
+      const imgData = canvas.toDataURL('image/png');
+      const pdf = new jsPDF({
+        orientation: 'portrait',
+        unit: 'mm',
+        format: 'a4'
+      });
+      
+      const imgProps = pdf.getImageProperties(imgData);
+      const pdfWidth = pdf.internal.pageSize.getWidth();
+      const pdfHeight = (imgProps.height * pdfWidth) / imgProps.width;
+      
+      // Center the receipt on the A4 page if it's small, or stay at top if long
+      const xOffset = 0;
+      const yOffset = 0;
+      
+      pdf.addImage(imgData, 'PNG', xOffset, yOffset, pdfWidth, Math.min(pdfHeight, 297));
+      pdf.save(`comprovante-venda-${sale.id.slice(-6)}.pdf`);
+    } catch (err) {
+      console.error('Erro ao gerar PDF:', err);
+      alert('Erro ao gerar PDF. Verifique se o navegador suporta esta função.');
     } finally {
       setLoading(false);
     }
+  };
+
+  const handlePrintReceipt = () => {
+    window.print();
   };
 
   const filteredSales = sales.filter(s => {
@@ -165,7 +279,8 @@ export default function SalesHistory() {
     const matchesMaxVal = !filters.maxValue || s.total <= Number(filters.maxValue);
     
     const matchesProduct = !filters.productName || s.items.some(item => 
-      item.name.toLowerCase().includes(filters.productName.toLowerCase())
+      item.name.toLowerCase().includes(filters.productName.toLowerCase()) ||
+      (item.sku && item.sku.toLowerCase().includes(filters.productName.toLowerCase()))
     );
 
     return matchesSearch && matchesCustomer && matchesDate && matchesMinVal && matchesMaxVal && matchesProduct;
@@ -382,7 +497,59 @@ export default function SalesHistory() {
               layoutId={`sale-${selectedSale.id}`}
               className="bg-white rounded-[40px] shadow-2xl w-full max-w-sm overflow-hidden relative z-10 flex flex-col max-h-[90vh]"
             >
-              <div className="absolute top-5 right-5 z-20">
+              {/* Printable Receipt Content */}
+              <div id="printable-receipt" className="print:block fixed left-[-9999px] top-0 print:left-0 print:inset-0 print:z-[100] print:bg-white opacity-0 pointer-events-none print:opacity-100 print:pointer-events-auto">
+                <div id="receipt-to-print" className="p-8 max-w-sm mx-auto bg-white">
+                  <div className="text-center mb-6">
+                    <div className="w-16 h-16 bg-slate-900 rounded-2xl flex items-center justify-center text-white mx-auto mb-4">
+                      <Receipt className="w-8 h-8" />
+                    </div>
+                    <h1 className="text-2xl font-black uppercase tracking-tighter">Comprovante de Venda</h1>
+                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">Nº: {selectedSale.id}</p>
+                  </div>
+
+                  <div className="border-t border-b border-dashed border-slate-200 py-4 mb-4">
+                    <div className="flex justify-between text-[10px] font-bold uppercase tracking-widest text-slate-400">
+                      <span>Data</span>
+                      <span>{formatDate(selectedSale.timestamp)}</span>
+                    </div>
+                    <div className="flex justify-between text-[10px] font-bold uppercase tracking-widest text-slate-400 mt-1">
+                      <span>Método</span>
+                      <span>{selectedSale.paymentMethod}</span>
+                    </div>
+                    <div className="flex justify-between text-[10px] font-bold uppercase tracking-widest text-slate-400 mt-1">
+                      <span>Vendedor</span>
+                      <span>{selectedSale.userName}</span>
+                    </div>
+                    <div className="flex justify-between text-[10px] font-bold uppercase tracking-widest text-slate-400 mt-1">
+                      <span>Cliente</span>
+                      <span>{selectedSale.customerName || 'Não Informado'}</span>
+                    </div>
+                  </div>
+
+                  <div className="space-y-3 mb-6">
+                    {selectedSale.items.map((item, idx) => (
+                      <div key={idx} className="flex justify-between items-start">
+                        <div className="max-w-[70%]">
+                          <p className="font-black text-[11px] uppercase leading-tight">{item.name}</p>
+                          <p className="text-[10px] text-slate-400 font-bold">{item.quantity}un x {formatCurrency(item.price)}</p>
+                        </div>
+                        <p className="font-black text-xs">{formatCurrency(item.total)}</p>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="border-t border-dashed border-slate-900 pt-4">
+                    <div className="flex justify-between items-center mb-1">
+                      <span className="text-xs font-bold uppercase text-slate-400">Total da Venda</span>
+                      <span className="text-xl font-black text-slate-900">{formatCurrency(selectedSale.total)}</span>
+                    </div>
+                    <p className="text-[8px] font-bold text-slate-400 text-center mt-6 uppercase tracking-widest italic">Obrigado pela preferência!</p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="absolute top-5 right-5 z-20 no-print">
                 <button 
                   onClick={() => setSelectedSale(null)} 
                   className="p-2.5 bg-white/80 hover:bg-white rounded-full shadow-lg transition-colors text-slate-800"
@@ -408,69 +575,230 @@ export default function SalesHistory() {
               </div>
 
               <div className="flex-1 overflow-y-auto p-8 space-y-6">
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="p-4 bg-slate-50 rounded-3xl border border-slate-100">
-                    <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1 flex items-center gap-1">
-                      <Calendar className="w-3 h-3" /> Data
-                    </p>
-                    <p className="text-xs font-black text-slate-800">{formatDate(selectedSale.timestamp)}</p>
-                  </div>
-                  <div className="p-4 bg-slate-50 rounded-3xl border border-slate-100">
-                    <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1 flex items-center gap-1">
-                      <CreditCard className="w-3 h-3" /> Método
-                    </p>
-                    <p className="text-xs font-black text-slate-800 uppercase">{selectedSale.paymentMethod}</p>
-                  </div>
-                </div>
-
-                <div className="p-4 bg-slate-50 rounded-3xl border border-slate-100">
-                  <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-2 flex items-center gap-1">
-                    <User className="w-3 h-3" /> Cliente & Vendedor
-                  </p>
-                  <div className="space-y-2">
-                    <div className="flex justify-between text-xs items-center">
-                       <span className="text-slate-400 font-bold uppercase text-[9px]">Cliente</span>
-                       <span className="text-slate-800 font-black">{selectedSale.customerName || 'Não Informado'}</span>
+                {editingSale ? (
+                  <div className="space-y-4">
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Data e Hora</label>
+                      <input 
+                        type="datetime-local"
+                        value={editForm.timestamp}
+                        onChange={(e) => setEditForm({...editForm, timestamp: e.target.value})}
+                        className="w-full bg-slate-50 border-none rounded-2xl px-4 py-3 text-xs font-bold outline-none focus:ring-2 focus:ring-primary/10"
+                      />
                     </div>
-                    <div className="flex justify-between text-xs items-center">
-                       <span className="text-slate-400 font-bold uppercase text-[9px]">Operador</span>
-                       <span className="text-slate-800 font-black">{selectedSale.userName}</span>
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Cliente</label>
+                      <input 
+                        type="text"
+                        value={editForm.customerName}
+                        onChange={(e) => setEditForm({...editForm, customerName: e.target.value})}
+                        className="w-full bg-slate-50 border-none rounded-2xl px-4 py-3 text-xs font-bold outline-none focus:ring-2 focus:ring-primary/10"
+                      />
                     </div>
-                  </div>
-                </div>
-
-                <div>
-                  <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-3 flex items-center gap-1 px-1">
-                    <Package className="w-3 h-3" /> Itens Vendidos ({selectedSale.items.reduce((acc, i) => acc + i.quantity, 0)})
-                  </p>
-                  <div className="space-y-2">
-                    {selectedSale.items.map((item, idx) => (
-                      <div key={idx} className="flex items-center justify-between p-3 bg-white rounded-2xl border border-slate-100 shadow-sm">
-                        <div className="max-w-[70%]">
-                          <p className="font-black text-slate-800 text-[11px] leading-tight line-clamp-1 uppercase">{item.name}</p>
-                          <p className="text-[10px] text-slate-400 font-bold mt-0.5">{item.quantity}un x {formatCurrency(item.price)}</p>
-                        </div>
-                        <p className="font-black text-slate-900 text-xs">{formatCurrency(item.total)}</p>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Método</label>
+                        <select 
+                          value={editForm.paymentMethod}
+                          onChange={(e) => setEditForm({...editForm, paymentMethod: e.target.value as any})}
+                          className="w-full bg-slate-50 border-none rounded-2xl px-4 py-3 text-xs font-bold outline-none focus:ring-2 focus:ring-primary/10"
+                        >
+                          <option value="dinheiro">Dinheiro</option>
+                          <option value="pix">PIX</option>
+                          <option value="cartão">Cartão</option>
+                          <option value="transferência">Transferência</option>
+                        </select>
                       </div>
-                    ))}
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Status</label>
+                        <select 
+                          value={editForm.paymentStatus}
+                          onChange={(e) => setEditForm({...editForm, paymentStatus: e.target.value as any})}
+                          className="w-full bg-slate-50 border-none rounded-2xl px-4 py-3 text-xs font-bold outline-none focus:ring-2 focus:ring-primary/10"
+                        >
+                          <option value="paid">Recebido</option>
+                          <option value="pending">A Receber</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Valor Total (R$)</label>
+                      <input 
+                        type="number"
+                        step="0.01"
+                        value={editForm.total}
+                        onChange={(e) => setEditForm({...editForm, total: Number(e.target.value)})}
+                        className="w-full bg-slate-50 border-none rounded-2xl px-4 py-3 text-xs font-bold outline-none focus:ring-2 focus:ring-primary/10 text-accent"
+                      />
+                    </div>
                   </div>
-                </div>
+                ) : (
+                  <>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="p-4 bg-slate-50 rounded-3xl border border-slate-100">
+                        <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1 flex items-center gap-1">
+                          <Calendar className="w-3 h-3" /> Data
+                        </p>
+                        <p className="text-xs font-black text-slate-800">{formatDate(selectedSale.timestamp)}</p>
+                      </div>
+                      <div className="p-4 bg-slate-50 rounded-3xl border border-slate-100">
+                        <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1 flex items-center gap-1">
+                          <CreditCard className="w-3 h-3" /> Método
+                        </p>
+                        <p className="text-xs font-black text-slate-800 uppercase">{selectedSale.paymentMethod}</p>
+                      </div>
+                    </div>
+
+                    <div className="p-4 bg-slate-50 rounded-3xl border border-slate-100">
+                      <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-2 flex items-center gap-1">
+                        <User className="w-3 h-3" /> Cliente & Vendedor
+                      </p>
+                      <div className="space-y-2">
+                        <div className="flex justify-between text-xs items-center">
+                           <span className="text-slate-400 font-bold uppercase text-[9px]">Cliente</span>
+                           <span className="text-slate-800 font-black">{selectedSale.customerName || 'Não Informado'}</span>
+                        </div>
+                        <div className="flex justify-between text-xs items-center">
+                           <span className="text-slate-400 font-bold uppercase text-[9px]">Operador</span>
+                           <span className="text-slate-800 font-black">{selectedSale.userName}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div>
+                      <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-3 flex items-center gap-1 px-1">
+                        <Package className="w-3 h-3" /> Itens Vendidos ({selectedSale.items.reduce((acc, i) => acc + i.quantity, 0)})
+                      </p>
+                      <div className="space-y-2">
+                        {selectedSale.items.map((item, idx) => (
+                          <div key={idx} className="flex items-center justify-between p-3 bg-white rounded-2xl border border-slate-100 shadow-sm">
+                              <div className="max-w-[70%]">
+                                <p className="font-black text-slate-800 text-[11px] leading-tight line-clamp-1 uppercase">{item.name}</p>
+                                <div className="flex items-center gap-2 mt-0.5">
+                                  {item.sku && (
+                                    <span className="text-[9px] font-bold text-slate-400">SKU: {item.sku}</span>
+                                  )}
+                                  <span className="text-[10px] text-slate-400 font-bold">{item.quantity}un x {formatCurrency(item.price)}</span>
+                                </div>
+                              </div>
+                            <p className="font-black text-slate-900 text-xs">{formatCurrency(item.total)}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </>
+                )}
               </div>
 
               <div className="p-8 pt-0 space-y-3">
-                <button 
-                  onClick={() => window.print()}
-                  className="w-full py-4 bg-slate-100 text-slate-700 font-black rounded-3xl flex items-center justify-center gap-2 text-xs shadow-sm hover:bg-slate-200 transition-colors uppercase"
-                >
-                  <Download className="w-4 h-4" /> Imprimir Comprovante
-                </button>
+                {editingSale ? (
+                  <div className="flex gap-3">
+                    <button 
+                      onClick={handleUpdateSale}
+                      disabled={loading}
+                      className="flex-1 py-4 bg-success text-white font-black rounded-3xl flex items-center justify-center gap-2 text-xs shadow-lg shadow-success/20 hover:scale-[1.02] transition-transform uppercase cursor-pointer"
+                    >
+                      {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                      Salvar Alterações
+                    </button>
+                    <button 
+                      onClick={() => setEditingSale(null)}
+                      className="flex-1 py-4 bg-slate-100 text-slate-600 font-black rounded-3xl text-xs uppercase"
+                    >
+                      Cancelar
+                    </button>
+                  </div>
+                ) : (
+                  <>
+                    <button 
+                      onClick={() => handleStartEdit(selectedSale)}
+                      className="w-full py-4 bg-accent text-white font-black rounded-3xl flex items-center justify-center gap-2 text-xs shadow-lg shadow-accent/20 hover:scale-[1.02] transition-transform uppercase cursor-pointer"
+                    >
+                      <Receipt className="w-4 h-4" /> Editar Venda
+                    </button>
+                    <button 
+                      onClick={handlePrintReceipt}
+                      className="w-full py-4 bg-slate-900 text-white font-black rounded-3xl flex items-center justify-center gap-2 text-xs shadow-sm hover:bg-slate-800 transition-colors uppercase"
+                    >
+                      <Receipt className="w-4 h-4" /> Emitir Comprovante
+                    </button>
+
+                    <button 
+                      onClick={() => handleDownloadPDF(selectedSale)}
+                      disabled={loading}
+                      className="w-full py-4 bg-slate-100 text-slate-700 font-black rounded-3xl flex items-center justify-center gap-2 text-xs shadow-sm hover:bg-slate-200 transition-colors uppercase disabled:opacity-50"
+                    >
+                      {loading ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <FileDown className="w-4 h-4" />
+                      )}
+                      Baixar como PDF
+                    </button>
+                    
+                    <button 
+                      onClick={(e) => selectedSale && handleDelete(selectedSale, e)}
+                      className="w-full py-4 bg-danger text-white font-black rounded-3xl flex items-center justify-center gap-2 text-xs shadow-lg shadow-danger/20 hover:scale-[1.02] transition-transform uppercase cursor-pointer"
+                    >
+                      <XCircle className="w-4 h-4" /> Cancelar / Estornar Venda
+                    </button>
+                  </>
+                )}
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+      
+      {/* Password Verification Modal */}
+      <AnimatePresence>
+        {showPasswordPrompt && (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowPasswordPrompt(false)}
+              className="absolute inset-0 bg-slate-900/60 backdrop-blur-md"
+            />
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-white rounded-[32px] shadow-2xl w-full max-w-xs overflow-hidden relative z-10 p-8 text-center"
+            >
+              <div className="w-16 h-16 bg-accent/10 rounded-2xl flex items-center justify-center text-accent mx-auto mb-6">
+                <Lock className="w-8 h-8" />
+              </div>
+              <h2 className="text-xl font-black text-slate-800 uppercase tracking-tighter mb-2">Acesso Restrito</h2>
+              <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-6">Confirme sua senha de Admin para continuar</p>
+              
+              <div className="space-y-4">
+                <input 
+                  type="password"
+                  value={passwordInput}
+                  onChange={(e) => setPasswordInput(e.target.value)}
+                  placeholder="Sua senha..."
+                  className="w-full bg-slate-50 border-none rounded-2xl px-6 py-4 text-center font-bold outline-none focus:ring-2 focus:ring-accent/20 transition-all"
+                  autoFocus
+                  onKeyDown={(e) => e.key === 'Enter' && confirmPassword()}
+                />
                 
+                <div className="flex flex-col gap-2">
                   <button 
-                    onClick={(e) => selectedSale && handleDelete(selectedSale, e)}
-                    className="w-full py-4 bg-danger text-white font-black rounded-3xl flex items-center justify-center gap-2 text-xs shadow-lg shadow-danger/20 hover:scale-[1.02] transition-transform uppercase cursor-pointer"
+                    onClick={confirmPassword}
+                    disabled={verifyingPassword}
+                    className="w-full py-4 bg-accent text-white font-black rounded-2xl text-[10px] uppercase shadow-lg shadow-accent/20 transition-all hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50"
                   >
-                    <XCircle className="w-4 h-4" /> Cancelar / Estornar Venda
+                    {verifyingPassword ? 'Verificando...' : 'Confirmar Acesso'}
                   </button>
+                  <button 
+                    onClick={() => setShowPasswordPrompt(false)}
+                    className="w-full py-4 bg-slate-50 text-slate-400 font-black rounded-2xl text-[10px] uppercase"
+                  >
+                    Cancelar
+                  </button>
+                </div>
               </div>
             </motion.div>
           </div>

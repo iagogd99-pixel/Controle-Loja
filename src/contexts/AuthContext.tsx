@@ -11,6 +11,7 @@ interface AuthContextType {
   mustChangePassword: boolean;
   login: (username: string, password: string) => Promise<void>;
   register: (username: string, password: string, name: string) => Promise<void>;
+  verifyPassword: (password: string) => Promise<boolean>;
   logout: () => void;
 }
 
@@ -146,6 +147,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  const verifyPassword = async (password: string): Promise<boolean> => {
+    if (!profile) return false;
+    try {
+      const q = query(
+        collection(db, 'users'), 
+        where('username', '==', profile.username),
+        where('password', '==', password)
+      );
+      const querySnapshot = await getDocs(q);
+      return !querySnapshot.empty;
+    } catch (error) {
+      console.error('Error verifying password:', error);
+      return false;
+    }
+  };
+
   const logout = () => {
     setProfile(null);
     localStorage.removeItem('estoquepro_user');
@@ -155,10 +172,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     user: profile ? { uid: profile.uid, email: profile.email } : null,
     profile,
     loading,
-    isAdmin: profile?.username === 'admin',
+    isAdmin: profile?.username === 'admin' || profile?.role === 'admin',
     mustChangePassword: !!profile?.mustChangePassword,
     login,
     register,
+    verifyPassword,
     logout,
   };
 

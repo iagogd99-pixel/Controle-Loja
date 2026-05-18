@@ -29,12 +29,49 @@ import { formatCurrency } from '@/src/lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
-import { Link } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
+import { useAuth } from '@/src/contexts/AuthContext';
+import { Lock } from 'lucide-react';
 
 export default function Purchases() {
+  const { profile, isAdmin, verifyPassword } = useAuth();
+  const navigate = useNavigate();
   const [purchases, setPurchases] = useState<Purchase[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
+
+  // Password Verification State
+  const [showPasswordPrompt, setShowPasswordPrompt] = useState(false);
+  const [passwordInput, setPasswordInput] = useState('');
+  const [verifyingPassword, setVerifyingPassword] = useState(false);
+  const [pendingAction, setPendingAction] = useState<() => void>(() => {});
+
+  const handleEditClick = (purchaseId: string) => {
+    const action = () => {
+      navigate(`/compras/nova?edit=${purchaseId}`);
+    };
+
+    if (isAdmin) {
+      setPendingAction(() => action);
+      setShowPasswordPrompt(true);
+    } else {
+      alert('Acesso restrito a administradores');
+    }
+  };
+
+  const confirmPassword = async () => {
+    setVerifyingPassword(true);
+    const isValid = await verifyPassword(passwordInput);
+    setVerifyingPassword(false);
+    
+    if (isValid) {
+      setShowPasswordPrompt(false);
+      setPasswordInput('');
+      pendingAction();
+    } else {
+      alert('Senha incorreta');
+    }
+  };
 
   useEffect(() => {
     const q = query(
@@ -55,13 +92,23 @@ export default function Purchases() {
   }, []);
 
   const handleDelete = async (purchase: Purchase) => {
-    if (!confirm(`Deseja realmente excluir esta compra #${purchase.id.slice(-6).toUpperCase()}? O estoque não será revertido automaticamente.`)) return;
-    
-    try {
-      await deleteDoc(doc(db, 'purchases', purchase.id));
-    } catch (error) {
-      console.error(error);
-      alert('Erro ao excluir compra');
+    const action = async () => {
+      try {
+        await deleteDoc(doc(db, 'purchases', purchase.id));
+        alert('Compra excluída com sucesso!');
+      } catch (error) {
+        console.error(error);
+        alert('Erro ao excluir compra');
+      }
+    };
+
+    if (isAdmin) {
+      if (confirm(`Deseja realmente excluir esta compra #${purchase.id.slice(-6).toUpperCase()}? O estoque não será revertido automaticamente.`)) {
+        setPendingAction(() => action);
+        setShowPasswordPrompt(true);
+      }
+    } else {
+      alert('Acesso restrito a administradores');
     }
   };
 
@@ -149,12 +196,12 @@ export default function Purchases() {
                       <p className="text-xl font-black text-primary">{formatCurrency(purchase.total)}</p>
                     </div>
                     <div className="flex gap-2">
-                       <Link 
-                        to={`/compras/nova?edit=${purchase.id}`}
+                       <button 
+                        onClick={() => handleEditClick(purchase.id)}
                         className="w-12 h-12 flex items-center justify-center bg-slate-50 text-slate-300 rounded-xl hover:bg-accent/10 hover:text-accent transition-all"
                       >
                         <Pencil className="w-5 h-5" />
-                      </Link>
+                      </button>
                       <button 
                         onClick={() => handleDelete(purchase)}
                         className="w-12 h-12 flex items-center justify-center bg-slate-50 text-slate-300 rounded-xl hover:bg-danger/10 hover:text-danger transition-all"
@@ -176,6 +223,61 @@ export default function Purchases() {
           )}
         </div>
       )}
+
+      {/* Password Verification Modal */}
+      <AnimatePresence>
+        {showPasswordPrompt && (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowPasswordPrompt(false)}
+              className="absolute inset-0 bg-slate-900/60 backdrop-blur-md"
+            />
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-white rounded-[32px] shadow-2xl w-full max-w-xs overflow-hidden relative z-10 p-8 text-center"
+            >
+              <div className="w-16 h-16 bg-accent/10 rounded-2xl flex items-center justify-center text-accent mx-auto mb-6">
+                <Lock className="w-8 h-8" />
+              </div>
+              <h2 className="text-xl font-black text-slate-800 uppercase tracking-tighter mb-2">Acesso Restrito</h2>
+              <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-6">Confirme sua senha de Admin para continuar</p>
+              
+              <div className="space-y-4">
+                <input 
+                  type="password"
+                  value={passwordInput}
+                  onChange={(e) => setPasswordInput(e.target.value)}
+                  placeholder="Sua senha..."
+                  className="w-full bg-slate-50 border-none rounded-2xl px-6 py-4 text-center font-bold outline-none focus:ring-2 focus:ring-accent/20 transition-all"
+                  autoFocus
+                  onKeyDown={(e) => e.key === 'Enter' && confirmPassword()}
+                />
+                
+                <div className="flex flex-col gap-2">
+                  <button 
+                    onClick={confirmPassword}
+                    disabled={verifyingPassword}
+                    className="w-full py-4 bg-accent text-white font-black rounded-2xl text-[10px] uppercase shadow-lg shadow-accent/20 transition-all hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50"
+                  >
+                    {verifyingPassword ? 'Verificando...' : 'Confirmar Acesso'}
+                  </button>
+                  <button 
+                    onClick={() => setShowPasswordPrompt(false)}
+                    className="w-full py-4 bg-slate-50 text-slate-400 font-black rounded-2xl text-[10px] uppercase"
+                  >
+                    Cancelar
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
