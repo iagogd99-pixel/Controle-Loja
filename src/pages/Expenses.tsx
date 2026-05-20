@@ -28,7 +28,9 @@ import {
   CheckCircle2,
   Loader2,
   FileText,
-  ShoppingBag
+  ShoppingBag,
+  User,
+  Clock
 } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
 import { format } from 'date-fns';
@@ -74,6 +76,7 @@ export default function Expenses() {
   const [unifiedExpenses, setUnifiedExpenses] = useState<UnifiedExpense[]>([]);
   const [loading, setLoading] = useState(true);
   const [showAddModal, setShowAddModal] = useState(false);
+  const [selectedExpense, setSelectedExpense] = useState<UnifiedExpense | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('all');
@@ -410,127 +413,252 @@ export default function Expenses() {
         </div>
       </div>
 
-      {/* Expenses Table/List */}
-      <div className="bg-white rounded-[32px] border border-slate-100 shadow-xl overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="bg-slate-50/50">
-                <th className="p-6 text-[10px] font-black text-slate-400 uppercase tracking-widest">Data / Categoria</th>
-                <th className="p-6 text-[10px] font-black text-slate-400 uppercase tracking-widest">Descrição</th>
-                <th className="p-6 text-[10px] font-black text-slate-400 uppercase tracking-widest">Pagamento</th>
-                <th className="p-6 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">Valor</th>
-                <th className="p-6 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Ações</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-50">
-              {filteredExpenses.map((e) => (
-                <tr key={e.id} className="hover:bg-slate-50/50 transition-colors group">
-                  <td className="p-6">
-                    <p className="text-xs font-black text-slate-800">{format(new Date(e.date), "dd/MM/yyyy")}</p>
-                    <p className={cn(
-                      "text-[9px] font-black uppercase tracking-widest mt-0.5 px-2 py-0.5 rounded-md inline-block",
-                      e.type === 'purchase' ? "bg-primary/10 text-primary" : "bg-accent/10 text-accent"
-                    )}>
-                      {e.category}
-                    </p>
-                  </td>
-                  <td className="p-6">
+      {/* Expenses Grid */}
+      <div>
+        {loading ? (
+          <div className="bg-white rounded-[28px] border border-slate-100 p-20 text-center flex flex-col items-center justify-center gap-4 shadow-sm">
+            <Loader2 className="w-10 h-10 text-accent animate-spin" />
+            <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Carregando histórico...</p>
+          </div>
+        ) : filteredExpenses.length === 0 ? (
+          <div className="bg-white rounded-[28px] border border-slate-100 p-20 text-center flex flex-col items-center justify-center gap-4 text-slate-400 shadow-sm">
+            <FileText className="w-12 h-12 stroke-1" />
+            <p className="text-sm font-black uppercase tracking-wider">Nenhuma despesa encontrada</p>
+            <p className="text-xs font-bold text-slate-400">Tente ajustar suas opções de filtragem acima.</p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 xs:grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 px-2">
+            {filteredExpenses.map((e) => {
+              const isPurchase = e.type === 'purchase';
+              const dateObj = new Date(e.date);
+              const formattedDate = dateObj.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+              
+              // Category pill theme style calculation
+              let badgeStyle = "bg-slate-100 text-slate-700 border-slate-200";
+              if (e.category === 'compra') badgeStyle = "bg-amber-50 text-amber-700 border-amber-100";
+              else if (e.category === 'operacional') badgeStyle = "bg-blue-50 text-blue-700 border-blue-100";
+              else if (e.category === 'pessoal') badgeStyle = "bg-purple-50 text-purple-700 border-purple-100";
+              else if (e.category === 'manutenção') badgeStyle = "bg-orange-50 text-orange-700 border-orange-100";
+              else badgeStyle = "bg-slate-50 text-slate-600 border-slate-100";
+
+              return (
+                <motion.div
+                  key={e.id}
+                  layoutId={`expense-card-${e.id}`}
+                  onClick={() => setSelectedExpense(e)}
+                  className={cn(
+                    "bg-white p-5 rounded-3xl border border-slate-100 shadow-sm hover:shadow-md transition-all text-left flex flex-col justify-between group relative cursor-pointer gap-4 border-b-4",
+                    e.status === 'paid' ? "border-b-danger hover:border-b-bg-danger" : "border-b-amber-500 hover:border-b-amber-600"
+                  )}
+                >
+                  {/* Top Header Row of the Box */}
+                  <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
-                       {e.type === 'purchase' && <ShoppingBag className="w-4 h-4 text-primary" />}
-                       <p className="text-sm font-bold text-slate-700">{e.description}</p>
+                      <div className={cn(
+                        "p-1.5 rounded-lg",
+                        isPurchase ? "bg-primary/10 text-primary" : "bg-accent/10 text-accent"
+                      )}>
+                        {isPurchase ? <ShoppingBag className="w-3.5 h-3.5" /> : <ArrowDownRight className="w-3.5 h-3.5" />}
+                      </div>
+                      <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">
+                        {isPurchase ? 'Compra' : 'Despesa'}
+                      </span>
                     </div>
-                    <div className="flex flex-wrap gap-2 mt-1">
-                      <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Usuário: {e.userName}</p>
-                      {e.purchaseId && (
-                        <p className="text-[10px] text-primary font-black uppercase tracking-widest leading-none bg-primary/5 px-2 py-1 rounded-md">
-                          Pedido: #{e.purchaseId.slice(-6).toUpperCase()}
-                        </p>
-                      )}
-                      {e.supplierName && e.type === 'expense' && (
-                        <p className="text-[10px] text-slate-500 font-black uppercase tracking-widest leading-none bg-slate-50 px-2 py-1 rounded-md">
-                          Fornecedor: {e.supplierName}
-                        </p>
-                      )}
-                    </div>
-                  </td>
-                  <td className="p-6">
-                    <span className="px-3 py-1 bg-slate-100 text-slate-500 rounded-full text-[9px] font-black uppercase tracking-widest">
-                      {e.paymentMethod}
+
+                    <span className={`text-[8px] font-black tracking-widest px-2.5 py-0.5 rounded-full uppercase border ${badgeStyle}`}>
+                      {e.category || 'GERAL'}
                     </span>
-                  </td>
-                  <td className="p-6 text-right">
-                    <p className={cn(
-                      "text-sm font-black",
-                      e.status === 'paid' ? "text-danger" : "text-amber-500"
+                  </div>
+
+                  {/* Mid Section: Styled Large Value */}
+                  <div>
+                    <h3 className={cn(
+                      "text-xl font-black tracking-tight",
+                      e.status === 'paid' ? "text-danger" : "text-amber-550 text-amber-600"
                     )}>
                       -{formatCurrency(e.amount)}
+                    </h3>
+                    <p className="text-xs text-slate-700 font-extrabold truncate mt-1 uppercase tracking-tight" title={e.description}>
+                      {e.description}
                     </p>
-                  </td>
-                  <td className="p-6">
-                    <div className="flex justify-center gap-2">
-                      {e.status === 'pending' && e.type === 'expense' && (
-                        <button 
-                          onClick={() => handleMarkAsPaid(e)}
-                          className="p-3 text-success hover:bg-success/10 rounded-xl transition-all"
-                          title="Marcar como Pago"
-                        >
-                          <CheckCircle2 className="w-5 h-5" />
-                        </button>
-                      )}
-                      <button 
-                        onClick={() => handleEditExpense(e)}
-                        className={cn(
-                          "p-3 rounded-xl transition-all",
-                          e.type === 'purchase' ? "text-slate-200 cursor-not-allowed" : "text-slate-300 hover:text-accent hover:bg-accent/10"
-                        )}
-                        title={e.type === 'purchase' ? "Editar na aba Compras" : "Editar"}
-                      >
-                        <Pencil className="w-5 h-5" />
-                      </button>
-                      <button 
-                        onClick={(ev) => {
-                          ev.stopPropagation();
-                          handleDeleteExpense(e);
-                        }}
-                        className={cn(
-                          "p-3 rounded-xl transition-all relative overflow-hidden",
-                          e.type === 'purchase' 
-                            ? "text-slate-200 cursor-not-allowed" 
-                            : deleteConfirmId === e.id
-                              ? "bg-danger text-white hover:bg-danger/90 px-4"
-                              : "text-slate-300 hover:text-danger hover:bg-danger/10"
-                        )}
-                        title={e.type === 'purchase' ? "Excluir na aba Compras" : deleteConfirmId === e.id ? "Clique novamente para confirmar" : "Excluir"}
-                      >
-                        {submitting && deleteConfirmId === e.id ? (
-                          <Loader2 className="w-5 h-5 animate-spin" />
-                        ) : deleteConfirmId === e.id ? (
-                          <span className="text-[9px] font-black uppercase tracking-widest whitespace-nowrap">Confirmar?</span>
-                        ) : (
-                          <Trash2 className="w-5 h-5" />
-                        )}
-                      </button>
+                  </div>
+
+                  {/* Bottom Footer Info Details */}
+                  <div className="pt-2 border-t border-slate-50 space-y-1.5">
+                    <div className="flex items-center gap-1.5 text-[10px] text-slate-400 font-medium">
+                      <Clock className="w-3 h-3 text-slate-350" />
+                      <span>{formattedDate}</span>
                     </div>
-                  </td>
-                </tr>
-              ))}
-              {filteredExpenses.length === 0 && (
-                <tr>
-                  <td colSpan={5} className="p-20 text-center">
-                    <div className="flex flex-col items-center">
-                      <div className="w-16 h-16 bg-slate-50 rounded-2xl flex items-center justify-center text-slate-200 mb-4">
-                        <FileText className="w-8 h-8" />
-                      </div>
-                      <p className="text-slate-400 font-bold uppercase tracking-widest text-xs">Nenhuma despesa encontrada</p>
+
+                    <div className="flex items-center gap-1.5 text-[10px] text-slate-500 font-bold">
+                      <User className="w-3 h-3 text-slate-400" />
+                      <span className="truncate uppercase font-extrabold">{e.userName || 'Sistema'}</span>
                     </div>
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+                  </div>
+                </motion.div>
+              );
+            })}
+          </div>
+        )}
       </div>
+
+      {/* Advanced Details Modal */}
+      <AnimatePresence>
+        {selectedExpense && (
+          <div className="fixed inset-0 z-[500] flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setSelectedExpense(null)}
+              className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm"
+            />
+            <motion.div
+              layoutId={`expense-card-${selectedExpense.id}`}
+              className="bg-white rounded-[40px] shadow-2xl w-full max-w-sm overflow-hidden relative z-10 flex flex-col max-h-[90vh]"
+            >
+              {/* Header section themed by transaction status */}
+              <div className={cn(
+                "p-8 pb-6 text-white relative",
+                selectedExpense.status === 'paid' ? 'bg-danger' : 'bg-amber-500'
+              )}>
+                <div className="absolute top-6 right-6 z-20">
+                  <button 
+                    onClick={() => setSelectedExpense(null)} 
+                    className="p-2 bg-white/20 hover:bg-white/30 rounded-full transition-colors text-white"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+
+                <div className="p-3 bg-white/10 rounded-2xl w-fit mb-4">
+                  {selectedExpense.type === 'purchase' ? <ShoppingBag className="w-6 h-6" /> : <FileText className="w-6 h-6" />}
+                </div>
+                
+                <span className="text-[10px] font-black uppercase tracking-widest bg-white/25 px-2.5 py-0.5 rounded-full inline-block font-bold">
+                  {selectedExpense.type === 'purchase' ? 'Compra de Estoque' : 'Despesa Lançada'}
+                </span>
+                
+                <h2 className="text-3xl font-black tracking-tight mt-2">-{formatCurrency(selectedExpense.amount)}</h2>
+                <p className="text-white/80 text-[10px] font-bold uppercase tracking-wider mt-1">Status: {selectedExpense.status === 'paid' ? 'PAGO' : 'PENDENTE'}</p>
+              </div>
+
+              {/* Body Details */}
+              <div className="flex-1 overflow-y-auto p-8 space-y-5">
+                <div className="bg-slate-50 p-6 rounded-3xl border border-slate-100/50 space-y-4">
+                  <div className="flex justify-between items-center text-xs">
+                    <span className="text-slate-400 font-extrabold uppercase tracking-wider text-[9px]">Lançado por</span>
+                    <span className="font-black text-slate-800 uppercase">{selectedExpense.userName || 'Sistema'}</span>
+                  </div>
+
+                  <div className="flex justify-between items-center text-xs">
+                    <span className="text-slate-400 font-extrabold uppercase tracking-wider text-[9px]">Categoria</span>
+                    <span className="font-black text-slate-800 uppercase px-2 py-0.5 bg-slate-100 rounded text-[9px] tracking-widest">{selectedExpense.category || 'N/A'}</span>
+                  </div>
+
+                  <div className="flex justify-between items-center text-xs">
+                    <span className="text-slate-400 font-extrabold uppercase tracking-wider text-[9px]">Meio de Pagamento</span>
+                    <span className="font-black text-slate-800 uppercase">{selectedExpense.paymentMethod || 'Dinheiro'}</span>
+                  </div>
+
+                  <div className="flex justify-between items-center text-xs">
+                    <span className="text-slate-400 font-extrabold uppercase tracking-wider text-[9px]">Data</span>
+                    <span className="font-black text-slate-800 tracking-tight">
+                      {format(new Date(selectedExpense.date), "dd/MM/yyyy HH:mm")}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Narrative Description / Reason */}
+                <div className="space-y-1 bg-slate-50 p-6 rounded-3xl border border-slate-100/50">
+                  <span className="text-slate-400 font-extrabold uppercase tracking-wider text-[9px] block">Descrição</span>
+                  <p className="text-xs font-black text-slate-800 uppercase leading-snug mt-1 break-words">
+                    {selectedExpense.description || 'Nenhuma descrição fornecida.'}
+                  </p>
+                  
+                  {selectedExpense.purchaseId && (
+                    <div className="pt-2.5 mt-2.5 border-t border-slate-200/50 flex justify-between text-[10px] font-bold">
+                      <span className="text-slate-400">ID COMPRA:</span>
+                      <span className="text-primary uppercase font-black">#{selectedExpense.purchaseId.slice(-6).toUpperCase()}</span>
+                    </div>
+                  )}
+
+                  {selectedExpense.supplierName && (
+                    <div className="pt-2.5 mt-2.5 border-t border-slate-200/50 flex justify-between text-[10px] font-bold">
+                      <span className="text-slate-400">FORNECEDOR:</span>
+                      <span className="text-slate-700 uppercase font-black">{selectedExpense.supplierName}</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="p-8 pt-4 pb-8 flex flex-col gap-3 border-t border-slate-50 bg-slate-50/55">
+                {selectedExpense.status === 'pending' && selectedExpense.type === 'expense' && (
+                  <button
+                    onClick={() => {
+                      handleMarkAsPaid(selectedExpense);
+                      setSelectedExpense(null);
+                    }}
+                    className="w-full py-4 bg-success text-white font-extrabold rounded-2xl text-[10px] uppercase flex items-center justify-center gap-1.5 transition-all active:scale-95 cursor-pointer shadow-sm shadow-success/15"
+                  >
+                    <CheckCircle2 className="w-4 h-4" />
+                    Marcar como Pago
+                  </button>
+                )}
+
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => {
+                      if (selectedExpense.type === 'purchase') {
+                        alert("Compras devem ser editadas no menu de Compras.");
+                        return;
+                      }
+                      handleEditExpense(selectedExpense);
+                      setSelectedExpense(null);
+                    }}
+                    disabled={selectedExpense.type === 'purchase'}
+                    className={cn(
+                      "flex-1 py-4 bg-white border font-extrabold rounded-2xl text-[10px] uppercase flex items-center justify-center gap-1.5 transition-all active:scale-95 cursor-pointer shadow-sm",
+                      selectedExpense.type === 'purchase'
+                        ? "text-slate-200 border-slate-100 cursor-not-allowed"
+                        : "border-slate-200 hover:border-slate-300 hover:bg-slate-50 text-slate-700"
+                    )}
+                  >
+                    <Pencil className="w-3.5 h-3.5 text-accent" />
+                    Editar
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      if (selectedExpense.type === 'purchase') {
+                        alert("Exclua a compra diretamente no Histórico de Compras para estornar o estoque.");
+                        return;
+                      }
+                      handleDeleteExpense(selectedExpense);
+                      if (deleteConfirmId === selectedExpense.id) {
+                        setSelectedExpense(null);
+                      }
+                    }}
+                    disabled={selectedExpense.type === 'purchase'}
+                    className={cn(
+                      "flex-1 py-4 transition-all active:scale-95 cursor-pointer shadow-sm font-extrabold rounded-2xl text-[10px] uppercase flex items-center justify-center gap-1.5",
+                      selectedExpense.type === 'purchase'
+                        ? "bg-white text-slate-200 border border-slate-100 cursor-not-allowed"
+                        : deleteConfirmId === selectedExpense.id
+                          ? "bg-danger text-white border border-danger hover:bg-danger/90"
+                          : "bg-white border hover:bg-danger/5 hover:border-danger border-red-100 text-danger"
+                    )}
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    {deleteConfirmId === selectedExpense.id ? "Confirmar?" : "Excluir"}
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
       {/* Add Modal */}
       <AnimatePresence>

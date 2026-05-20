@@ -48,7 +48,8 @@ export default function Dashboard() {
     monthlyExpenses: 0,
     totalProfitMargin: 0,
     pendingSalesTotal: 0,
-    pendingPurchasesTotal: 0
+    pendingPurchasesTotal: 0,
+    netProfitAllTime: 0
   });
   const [recentSales, setRecentSales] = useState<Sale[]>([]);
   const [recentMovements, setRecentMovements] = useState<Movement[]>([]);
@@ -124,6 +125,24 @@ export default function Dashboard() {
       setRecentMovements(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Movement)));
     });
 
+    // Real-time calculation of Lifetime Net Profit (all inflows - all outflows)
+    const unsubAllTimeCashMovements = onSnapshot(collection(db, 'cash_movements'), (snapshot) => {
+      let inflows = 0;
+      let outflows = 0;
+      snapshot.forEach((doc) => {
+        const data = doc.data();
+        if (data.type === 'in') {
+          inflows += (data.amount || 0);
+        } else if (data.type === 'out') {
+          outflows += (data.amount || 0);
+        }
+      });
+      setStats(prev => ({
+        ...prev,
+        netProfitAllTime: inflows - outflows
+      }));
+    });
+
     // Daily Sales Chart Data (Last 10 days)
     const last10DaysData = async () => {
       const data = [];
@@ -173,6 +192,7 @@ export default function Dashboard() {
       unsubPendingPurchases();
       unsubRecentSales();
       unsubRecentMovements();
+      unsubAllTimeCashMovements();
     };
   }, []);
 
@@ -197,7 +217,7 @@ export default function Dashboard() {
       {/* Daily & Monthly Financial Summary (Image Style) */}
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-8 px-2">
         <FinancialSummaryCard 
-          title="Caixa da Empresa"
+          title="Resumo Diário"
           subtitle="Resumo financeiro do dia"
           receitas={stats.dailyRevenue}
           despesas={stats.dailyExpenses}
@@ -215,13 +235,20 @@ export default function Dashboard() {
       </div>
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-1 gap-4 px-2">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4 px-2">
         <StatCard 
-          title="Lucro Realizado" 
+          title="Lucro Bruto Realizado" 
           value={formatCurrency(stats.monthlyProfit)} 
           icon={ShoppingCart} 
           color="bg-accent"
           trend={`Hoje: ${formatCurrency(stats.dailyProfit)}`}
+        />
+        <StatCard 
+          title="Lucro Líquido" 
+          value={formatCurrency(stats.netProfitAllTime)} 
+          icon={Activity} 
+          color="bg-[#0d9488]"
+          trend="Todo o período"
         />
         <StatCard 
           title="Margem Total" 
@@ -340,52 +367,60 @@ export default function Dashboard() {
 
 function FinancialSummaryCard({ title, subtitle, receitas, despesas, lucro, saldo }: any) {
   return (
-    <div className="bg-[#0d9488] p-8 rounded-[20px] shadow-xl text-white space-y-8">
+    <div className="bg-[#0d9488] p-6 rounded-[20px] shadow-xl text-white space-y-6">
       <div className="flex items-center gap-4">
-        <div className="w-14 h-14 bg-white/10 rounded-lg flex items-center justify-center">
-          <Wallet className="w-7 h-7 text-white" />
+        <div className="w-12 h-12 bg-white/10 rounded-lg flex items-center justify-center">
+          <Wallet className="w-6 h-6 text-white" />
         </div>
         <div>
-          <h2 className="text-xl font-black tracking-tight">{title}</h2>
-          <p className="text-white/60 text-xs font-bold leading-none mt-1">{subtitle}</p>
+          <h2 className="text-lg font-black tracking-tight">{title}</h2>
+          <p className="text-white/60 text-[10px] font-bold leading-none mt-1">{subtitle}</p>
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-2 gap-3">
         {/* Receitas */}
-        <div className="bg-white/10 p-5 rounded-xl space-y-2">
+        <div className="bg-white/10 p-3.5 rounded-xl space-y-1.5 overflow-hidden">
           <div className="flex items-center gap-1.5">
-            <ArrowUpRight className="w-4 h-4 text-white/60" />
-            <span className="text-[10px] font-bold uppercase tracking-wider text-white/80">Receitas</span>
+            <ArrowUpRight className="w-3.5 h-3.5 text-white/60" />
+            <span className="text-[9px] font-bold uppercase tracking-wider text-white/80">Receitas</span>
           </div>
-          <p className="text-xl font-black">{formatCurrency(receitas)}</p>
+          <p className="text-[13px] min-[370px]:text-sm sm:text-base font-black truncate" title={formatCurrency(receitas)}>
+            {formatCurrency(receitas)}
+          </p>
         </div>
 
         {/* Despesas */}
-        <div className="bg-white/10 p-5 rounded-xl space-y-2">
+        <div className="bg-white/10 p-3.5 rounded-xl space-y-1.5 overflow-hidden">
           <div className="flex items-center gap-1.5">
-            <ArrowDownRight className="w-4 h-4 text-white/60" />
-            <span className="text-[10px] font-bold uppercase tracking-wider text-white/80">Despesas</span>
+            <ArrowDownRight className="w-3.5 h-3.5 text-white/60" />
+            <span className="text-[9px] font-bold uppercase tracking-wider text-white/80">Despesas</span>
           </div>
-          <p className="text-xl font-black">{formatCurrency(despesas)}</p>
+          <p className="text-[13px] min-[370px]:text-sm sm:text-base font-black truncate" title={formatCurrency(despesas)}>
+            {formatCurrency(despesas)}
+          </p>
         </div>
 
         {/* Lucro */}
-        <div className="bg-white/10 p-5 rounded-xl space-y-2">
+        <div className="bg-white/10 p-3.5 rounded-xl space-y-1.5 overflow-hidden">
           <div className="flex items-center gap-1.5">
-            <Activity className="w-4 h-4 text-white/60" />
-            <span className="text-[10px] font-bold uppercase tracking-wider text-white/80">Lucro</span>
+            <Activity className="w-3.5 h-3.5 text-white/60" />
+            <span className="text-[9px] font-bold uppercase tracking-wider text-white/80">Lucro</span>
           </div>
-          <p className="text-xl font-black">{formatCurrency(lucro)}</p>
+          <p className="text-[13px] min-[370px]:text-sm sm:text-base font-black truncate" title={formatCurrency(lucro)}>
+            {formatCurrency(lucro)}
+          </p>
         </div>
 
         {/* Saldo do Dia */}
-        <div className="bg-white/10 p-5 rounded-xl border border-white/20 space-y-2">
+        <div className="bg-white/10 p-3.5 rounded-xl border border-white/20 space-y-1.5 overflow-hidden">
           <div className="flex items-center gap-1.5">
-            <DollarSign className="w-4 h-4 text-white/60" />
-            <span className="text-[10px] font-bold uppercase tracking-wider text-white/80">Saldo</span>
+            <DollarSign className="w-3.5 h-3.5 text-white/60" />
+            <span className="text-[9px] font-bold uppercase tracking-wider text-white/80">Saldo</span>
           </div>
-          <p className="text-xl font-black">{formatCurrency(saldo)}</p>
+          <p className="text-[13px] min-[370px]:text-sm sm:text-base font-black truncate" title={formatCurrency(saldo)}>
+            {formatCurrency(saldo)}
+          </p>
         </div>
       </div>
     </div>

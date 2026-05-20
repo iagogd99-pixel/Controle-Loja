@@ -14,6 +14,7 @@ import { Layout } from '@/src/components/Layout';
 const Login = React.lazy(() => import('@/src/pages/Login'));
 const Dashboard = React.lazy(() => import('@/src/pages/Dashboard'));
 const Products = React.lazy(() => import('@/src/pages/Products'));
+const LancarNota = React.lazy(() => import('@/src/pages/LancarNota'));
 const ProductForm = React.lazy(() => import('@/src/pages/ProductForm'));
 const Sales = React.lazy(() => import('@/src/pages/Sales'));
 const SalesHistory = React.lazy(() => import('@/src/pages/SalesHistory'));
@@ -29,6 +30,7 @@ const Settings = React.lazy(() => import('@/src/pages/Settings'));
 const Categories = React.lazy(() => import('@/src/pages/Categories'));
 const Purchases = React.lazy(() => import('@/src/pages/Purchases'));
 const PurchaseForm = React.lazy(() => import('@/src/pages/PurchaseForm'));
+const Movements = React.lazy(() => import('@/src/pages/Movements'));
 
 export default function App() {
   return (
@@ -52,6 +54,12 @@ export default function App() {
             <Route path="/produtos" element={
               <ProtectedRoute>
                 <Layout><Products /></Layout>
+              </ProtectedRoute>
+            } />
+
+            <Route path="/produtos/lancar-nota" element={
+              <ProtectedRoute>
+                <Layout><LancarNota /></Layout>
               </ProtectedRoute>
             } />
 
@@ -148,6 +156,12 @@ export default function App() {
             <Route path="/compras/nova" element={
               <ProtectedRoute>
                 <Layout><PurchaseForm /></Layout>
+              </ProtectedRoute>
+            } />
+
+            <Route path="/movimentacoes" element={
+              <ProtectedRoute>
+                <Layout><Movements /></Layout>
               </ProtectedRoute>
             } />
 

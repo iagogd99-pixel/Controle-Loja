@@ -208,45 +208,7 @@ export default function PurchasesPending() {
       try {
         const batch = writeBatch(db);
 
-        // 1. Revert product stock (Subtract what was added)
-        if (purchase.items && Array.isArray(purchase.items)) {
-          for (const item of purchase.items) {
-            const productRef = doc(db, 'products', item.productId);
-            try {
-              const productSnap = await getDoc(productRef);
-              if (productSnap.exists()) {
-                const updateData: any = {
-                  stock: increment(-item.quantity)
-                };
-
-                if (item.size) {
-                  updateData[`sizeStock.${item.size}`] = increment(-item.quantity);
-                }
-
-                batch.update(productRef, updateData);
-
-                // Reversal movement record
-                const revMovRef = doc(collection(db, 'movements'));
-                batch.set(revMovRef, {
-                  productId: item.productId,
-                  productName: item.name + (item.size ? ` (${item.size})` : ''),
-                  type: 'out',
-                  quantity: item.quantity,
-                  reason: `Estorno Compra Excluída (Pendente) #${purchase.id.slice(-6).toUpperCase()}`,
-                  userId: profile?.uid || 'system',
-                  userName: profile?.name || 'Sistema',
-                  timestamp: serverTimestamp()
-                });
-              }
-            } catch (e) {
-              console.warn(`Erro ao reverter produto ${item.productId}:`, e);
-            }
-          }
-        }
-
-        // 2. Delete linked movements
-        const movementsSnap = await getDocs(query(collection(db, 'movements'), where('purchaseId', '==', purchase.id)));
-        movementsSnap.docs.forEach(d => batch.delete(d.ref));
+        // Purchases no longer affect stock, so no product stock reversion is needed here.
 
         // 3. Delete linked cash movements
         const cashMovementsSnap = await getDocs(query(collection(db, 'cash_movements'), where('purchaseId', '==', purchase.id)));

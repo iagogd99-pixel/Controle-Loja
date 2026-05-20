@@ -395,35 +395,9 @@ export default function PurchaseForm() {
           }
         }
 
-        // If editing, revert old stock changes first
+        // If editing, skip old stock changes reversion as purchases no longer affect stock
         if (editingId && originalPurchase) {
-          for (const item of originalPurchase.items) {
-            const productRef = doc(db, "products", item.productId);
-            const updateData: any = {
-              stock: increment(-item.quantity), // Subtract what was added
-              updatedAt: serverTimestamp(),
-            };
-
-            if (item.size) {
-              updateData[`sizeStock.${item.size}`] = increment(-item.quantity);
-            }
-
-            transaction.update(productRef, updateData);
-
-            // Register reversal movement
-            const movementRef = doc(collection(db, "movements"));
-            transaction.set(movementRef, {
-              productId: item.productId,
-              productName:
-                item.name + (item.size ? ` (Tamanho: ${item.size})` : ""),
-              type: "out",
-              quantity: item.quantity,
-              reason: `Estorno (Edição) Compra #${editingId.slice(-6).toUpperCase()}`,
-              userId: profile.uid,
-              userName: profile.name,
-              timestamp: serverTimestamp(),
-            });
-          }
+          // No stock changes to revert
         }
 
         const purchaseData = {
@@ -530,12 +504,11 @@ export default function PurchaseForm() {
           }
         }
 
-        // 2. Update stock and register movements for each product (New values)
+        // 2. Update product cost prices only (purchases no longer affect stock)
         for (const item of cart) {
           const productRef = doc(db, "products", item.productId);
 
           const updateData: any = {
-            stock: increment(item.quantity),
             baseCostPrice: item.price,
             shippingCostPrice: 0,
             interestCostPrice: 0,
@@ -544,26 +517,7 @@ export default function PurchaseForm() {
             updatedAt: serverTimestamp(),
           };
 
-          if (item.size) {
-            updateData[`sizeStock.${item.size}`] = increment(item.quantity);
-          }
-
           transaction.update(productRef, updateData);
-
-          // Register movement document
-          const movementRef = doc(collection(db, "movements"));
-          transaction.set(movementRef, {
-            productId: item.productId,
-            productName:
-              item.name + (item.size ? ` (Tamanho: ${item.size})` : ""),
-            type: "in",
-            quantity: item.quantity,
-            reason: `${editingId ? "Ajuste (Edição)" : "Entrada"} via Compra #${purchaseRef.id.slice(-6).toUpperCase()}`,
-            purchaseId: purchaseRef.id,
-            userId: profile.uid,
-            userName: profile.name,
-            timestamp: serverTimestamp(),
-          });
         }
       });
 

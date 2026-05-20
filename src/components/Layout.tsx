@@ -20,7 +20,8 @@ import {
   ChevronDown,
   ChevronUp,
   Plus,
-  FileText
+  FileText,
+  History
 } from 'lucide-react';
 import { useAuth } from '@/src/contexts/AuthContext';
 import { auth } from '@/src/lib/firebase';
@@ -65,7 +66,15 @@ const menuItems: MenuItem[] = [
       { path: '/compras-pendentes', label: 'Compras a Pagar', icon: Clock },
     ]
   },
-  { path: '/produtos', label: 'Produtos / Estoque', icon: Package },
+  { path: '/movimentacoes', label: 'Movimentações', icon: History },
+  { 
+    label: 'Produtos / Estoque', 
+    icon: Package,
+    children: [
+      { path: '/produtos/lancar-nota', label: 'Lançar Nota', icon: Plus },
+      { path: '/produtos', label: 'Estoque', icon: Package },
+    ]
+  },
   { path: '/relatorios', label: 'Relatórios', icon: BarChart3 },
   { path: '/clientes', label: 'Clientes', icon: Users },
   { path: '/fornecedores', label: 'Fornecedores', icon: Truck },
