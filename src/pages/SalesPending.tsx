@@ -511,7 +511,7 @@ export default function SalesPending() {
             />
             <motion.div 
               layoutId={`sale-${selectedSale.id}`}
-              className="bg-white rounded-[40px] shadow-2xl w-full max-w-sm overflow-hidden relative z-10 flex flex-col max-h-[90vh]"
+              className="bg-white rounded-[40px] shadow-2xl w-full max-w-sm overflow-y-auto relative z-10 max-h-[90vh]"
             >
               <div className="absolute top-5 right-5 z-20">
                 <button 
@@ -538,7 +538,7 @@ export default function SalesPending() {
                  </div>
               </div>
 
-              <div className="flex-1 overflow-y-auto p-8 space-y-6">
+              <div className="p-8 space-y-6">
                 <div className="grid grid-cols-2 gap-4">
                   <div className="p-4 bg-slate-50 rounded-3xl border border-slate-100">
                     <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1 flex items-center gap-1">
@@ -673,20 +673,21 @@ export default function SalesPending() {
                 </div>
               </div>
 
-              <div className="p-8 pt-0 flex gap-3">
+              <div className="p-8 pt-0 pb-8 flex gap-2">
                 <button 
                   onClick={(e) => selectedSale && handleDelete(selectedSale, e)}
                   disabled={isProcessing}
-                  className="w-16 h-16 bg-slate-100 text-slate-400 font-black rounded-3xl flex items-center justify-center hover:bg-danger/10 hover:text-danger transition-all active:scale-95 shadow-sm"
+                  className="w-14 h-14 bg-danger/10 text-danger hover:bg-danger hover:text-white rounded-2xl flex items-center justify-center transition-all active:scale-95 shadow-sm shrink-0 cursor-pointer"
+                  title="Excluir Venda"
                 >
-                  <Trash2 className="w-6 h-6" />
+                  <Trash2 className="w-5 h-5" />
                 </button>
                 <button 
                   onClick={() => handleFinalize(selectedSale)}
                   disabled={isProcessing}
-                  className="flex-1 h-16 bg-danger text-white font-black rounded-3xl flex items-center justify-center text-sm shadow-xl shadow-danger/20 hover:scale-[1.02] transition-transform uppercase disabled:opacity-50"
+                  className="flex-1 h-14 bg-danger text-white font-black rounded-2xl flex items-center justify-center text-xs shadow-lg shadow-danger/20 hover:scale-[1.02] transition-transform uppercase disabled:opacity-50 cursor-pointer"
                 >
-                  {isProcessing && <Loader2 className="w-5 h-5 animate-spin mr-2" />}
+                  {isProcessing && <Loader2 className="w-4 h-4 animate-spin mr-2" />}
                   Efetivar Recebimento
                 </button>
               </div>

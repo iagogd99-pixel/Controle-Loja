@@ -15,6 +15,7 @@ import {
   TrendingUp,
   XCircle,
   Trash2,
+  Edit2,
   Plus,
   Lock,
   Loader2,
@@ -525,7 +526,7 @@ export default function SalesHistory() {
             />
             <motion.div 
               layoutId={`sale-${selectedSale.id}`}
-              className="bg-white rounded-[40px] shadow-2xl w-full max-w-sm overflow-hidden relative z-10 flex flex-col max-h-[90vh]"
+              className="bg-white rounded-[40px] shadow-2xl w-full max-w-sm overflow-y-auto relative z-10 max-h-[90vh]"
             >
               {/* Printable Receipt Content */}
               <div id="printable-receipt" className="print:block fixed left-[-9999px] top-0 print:left-0 print:inset-0 print:z-[100] print:bg-white opacity-0 pointer-events-none print:opacity-100 print:pointer-events-auto">
@@ -609,7 +610,7 @@ export default function SalesHistory() {
                  </div>
               </div>
 
-              <div className="flex-1 overflow-y-auto p-8 space-y-6">
+              <div className="p-8 space-y-6">
                 {editingSale ? (
                   <div className="space-y-4">
                     <div className="space-y-1">
@@ -795,7 +796,7 @@ export default function SalesHistory() {
                 )}
               </div>
 
-              <div className="p-8 pt-0 space-y-3">
+              <div className="p-8 pt-0 pb-8">
                 {editingSale ? (
                   <div className="flex gap-3">
                     <button 
@@ -814,40 +815,45 @@ export default function SalesHistory() {
                     </button>
                   </div>
                 ) : (
-                  <>
+                  <div className="flex gap-2 w-full">
                     <button 
                       onClick={() => handleStartEdit(selectedSale)}
-                      className="w-full py-4 bg-accent text-white font-black rounded-3xl flex items-center justify-center gap-2 text-xs shadow-lg shadow-accent/20 hover:scale-[1.02] transition-transform uppercase cursor-pointer"
+                      className="w-14 h-14 bg-accent text-white font-black rounded-2xl flex items-center justify-center shadow-lg shadow-accent/20 hover:scale-[1.02] transition-transform shrink-0 cursor-pointer"
+                      title="Editar Venda"
                     >
-                      <Receipt className="w-4 h-4" /> Editar Venda
+                      <Edit2 className="w-5 h-5" />
                     </button>
+                    
+                    <button 
+                      onClick={(e) => selectedSale && handleDelete(selectedSale, e)}
+                      className="w-14 h-14 bg-danger/10 text-danger hover:bg-danger hover:text-white transition-all rounded-2xl flex items-center justify-center shadow-sm shrink-0 cursor-pointer"
+                      title="Cancelar / Estornar Venda"
+                    >
+                      <Trash2 className="w-5 h-5" />
+                    </button>
+
                     <button 
                       onClick={handlePrintReceipt}
-                      className="w-full py-4 bg-slate-900 text-white font-black rounded-3xl flex items-center justify-center gap-2 text-xs shadow-sm hover:bg-slate-800 transition-colors uppercase"
+                      className="flex-1 h-14 bg-slate-900 text-white font-black rounded-2xl flex items-center justify-center gap-2 text-[10px] uppercase font-bold shadow-sm hover:bg-slate-800 transition-colors"
+                      title="Emitir Comprovante"
                     >
-                      <Receipt className="w-4 h-4" /> Emitir Comprovante
+                      <Receipt className="w-4 h-4" /> Comprovante
                     </button>
 
                     <button 
                       onClick={() => handleDownloadPDF(selectedSale)}
                       disabled={loading}
-                      className="w-full py-4 bg-slate-100 text-slate-700 font-black rounded-3xl flex items-center justify-center gap-2 text-xs shadow-sm hover:bg-slate-200 transition-colors uppercase disabled:opacity-50"
+                      className="flex-1 h-14 bg-slate-100 text-slate-700 font-black rounded-2xl flex items-center justify-center gap-1.5 text-[10px] uppercase font-bold shadow-sm hover:bg-slate-200 transition-colors disabled:opacity-50"
+                      title="Baixar como PDF"
                     >
                       {loading ? (
                         <Loader2 className="w-4 h-4 animate-spin" />
                       ) : (
                         <FileDown className="w-4 h-4" />
                       )}
-                      Baixar como PDF
+                      PDF
                     </button>
-                    
-                    <button 
-                      onClick={(e) => selectedSale && handleDelete(selectedSale, e)}
-                      className="w-full py-4 bg-danger text-white font-black rounded-3xl flex items-center justify-center gap-2 text-xs shadow-lg shadow-danger/20 hover:scale-[1.02] transition-transform uppercase cursor-pointer"
-                    >
-                      <XCircle className="w-4 h-4" /> Cancelar / Estornar Venda
-                    </button>
-                  </>
+                  </div>
                 )}
               </div>
             </motion.div>
