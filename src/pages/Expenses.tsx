@@ -32,7 +32,7 @@ import {
   User,
   Clock
 } from 'lucide-react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams, useNavigate } from 'react-router-dom';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { motion, AnimatePresence } from 'motion/react';
@@ -68,27 +68,19 @@ interface UnifiedExpense {
   purchaseId?: string;
   supplierName?: string;
   status: 'paid' | 'pending';
+  note?: string;
 }
 
 export default function Expenses() {
   const { profile } = useAuth();
+  const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const [unifiedExpenses, setUnifiedExpenses] = useState<UnifiedExpense[]>([]);
   const [loading, setLoading] = useState(true);
-  const [showAddModal, setShowAddModal] = useState(false);
   const [selectedExpense, setSelectedExpense] = useState<UnifiedExpense | null>(null);
-  const [editingId, setEditingId] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('all');
   const [activeTab, setActiveTab] = useState<'realizadas' | 'futuras'>('realizadas');
-
-  // Form State
-  const [description, setDescription] = useState('');
-  const [amount, setAmount] = useState('');
-  const [paymentMethod, setPaymentMethod] = useState('dinheiro');
-  const [category, setCategory] = useState<'operacional' | 'pessoal' | 'manutenção' | 'outros'>('operacional');
-  const [status, setStatus] = useState<'paid' | 'pending'>('paid');
-  const [date, setDate] = useState(getBrasiliaTime().toISOString().slice(0, 16));
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
@@ -186,65 +178,18 @@ export default function Expenses() {
 
   useEffect(() => {
     if (searchParams.get('new') === 'true') {
-      setShowAddModal(true);
-      // Remove the parameter after showing the modal
-      const nextParams = new URLSearchParams(searchParams);
-      nextParams.delete('new');
-      setSearchParams(nextParams, { replace: true });
+      navigate('/despesas/nova');
     }
-  }, [searchParams, setSearchParams]);
+  }, [searchParams, navigate]);
 
-  const handleAddExpense = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!profile || submitting) return;
 
-    try {
-      setSubmitting(true);
-      const expenseData = {
-        description,
-        amount: Number(amount),
-        paymentMethod,
-        category,
-        status,
-        date,
-        userId: profile.uid,
-        userName: profile.name
-      };
-
-      if (editingId) {
-        await updateDoc(doc(db, 'expenses', editingId), expenseData);
-      } else {
-        await addDoc(collection(db, 'expenses'), {
-          ...expenseData,
-          timestamp: getBrasiliaISO(),
-        });
-      }
-
-      setShowAddModal(false);
-      setEditingId(null);
-      resetForm();
-      alert(editingId ? "Despesa atualizada!" : "Despesa lançada com sucesso!");
-    } catch (error) {
-      console.error("Erro ao salvar despesa:", error);
-      alert("Erro ao salvar despesa.");
-    } finally {
-      setSubmitting(false);
-    }
-  };
 
   const handleEditExpense = (expense: UnifiedExpense) => {
     if (expense.type === 'purchase') {
       alert("Compras devem ser editadas no menu de Compras.");
       return;
     }
-    setEditingId(expense.id);
-    setDescription(expense.description);
-    setAmount(expense.amount.toString());
-    setPaymentMethod(expense.paymentMethod);
-    setCategory(expense.category as any);
-    setStatus(expense.status || 'paid');
-    setDate(expense.date);
-    setShowAddModal(true);
+    navigate(`/despesas/editar/${expense.id}`);
   };
 
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
@@ -304,14 +249,7 @@ export default function Expenses() {
     }
   };
 
-  const resetForm = () => {
-    setDescription('');
-    setAmount('');
-    setPaymentMethod('dinheiro');
-    setCategory('operacional');
-    setStatus('paid');
-    setDate(getBrasiliaTime().toISOString().slice(0, 16));
-  };
+
 
   const filteredExpenses = unifiedExpenses.filter(e => {
     const matchesSearch = e.description.toLowerCase().includes(searchTerm.toLowerCase()) || 
@@ -332,8 +270,8 @@ export default function Expenses() {
           <p className="text-slate-400 font-bold text-sm uppercase tracking-widest mt-1">Gestão de Gastos e Compras</p>
         </div>
         <button 
-          onClick={() => setShowAddModal(true)}
-          className="bg-accent text-white px-8 py-4 rounded-2xl font-black uppercase text-xs tracking-widest shadow-xl shadow-accent/20 hover:translate-y-[-2px] active:translate-y-0 transition-all flex items-center justify-center gap-3"
+          onClick={() => navigate('/despesas/nova')}
+          className="bg-accent text-white px-8 py-4 rounded-2xl font-black uppercase text-xs tracking-widest shadow-xl shadow-accent/20 hover:translate-y-[-2px] active:translate-y-0 transition-all flex items-center justify-center gap-3 cursor-pointer"
         >
           <Plus className="w-5 h-5" />
           Nova Despesa
@@ -570,11 +508,22 @@ export default function Expenses() {
                 </div>
 
                 {/* Narrative Description / Reason */}
-                <div className="space-y-1 bg-slate-50 p-6 rounded-3xl border border-slate-100/50">
-                  <span className="text-slate-400 font-extrabold uppercase tracking-wider text-[9px] block">Descrição</span>
-                  <p className="text-xs font-black text-slate-800 uppercase leading-snug mt-1 break-words">
-                    {selectedExpense.description || 'Nenhuma descrição fornecida.'}
-                  </p>
+                <div className="space-y-3 bg-slate-50 p-6 rounded-3xl border border-slate-100/50">
+                  <div>
+                    <span className="text-slate-400 font-extrabold uppercase tracking-wider text-[9px] block">Nome da Despesa</span>
+                    <p className="text-xs font-black text-slate-800 uppercase leading-snug mt-1 break-words">
+                      {selectedExpense.description || 'Nenhuma descrição fornecida.'}
+                    </p>
+                  </div>
+                  
+                  {selectedExpense.note && (
+                    <div className="pt-2.5 border-t border-slate-200/50">
+                      <span className="text-slate-400 font-extrabold uppercase tracking-wider text-[9px] block">Observações / Detalhes</span>
+                      <p className="text-xs font-semibold text-slate-700 leading-snug mt-1 break-words">
+                        {selectedExpense.note}
+                      </p>
+                    </div>
+                  )}
                   
                   {selectedExpense.purchaseId && (
                     <div className="pt-2.5 mt-2.5 border-t border-slate-200/50 flex justify-between text-[10px] font-bold">
@@ -660,152 +609,6 @@ export default function Expenses() {
         )}
       </AnimatePresence>
 
-      {/* Add Modal */}
-      <AnimatePresence>
-        {showAddModal && (
-          <div className="fixed inset-0 z-[1000] flex items-center justify-center p-4">
-            <motion.div 
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={() => setShowAddModal(false)}
-              className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"
-            />
-            <motion.div 
-              initial={{ scale: 0.9, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.9, opacity: 0 }}
-              className="bg-white rounded-[40px] shadow-2xl w-full max-w-xl overflow-hidden relative z-[1001]"
-            >
-              <div className="bg-slate-50 p-8 border-b border-slate-100">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-4">
-                    <div className={cn(
-                      "w-12 h-12 rounded-2xl flex items-center justify-center text-white",
-                      editingId ? "bg-accent" : "bg-danger"
-                    )}>
-                      {editingId ? <Pencil className="w-6 h-6" /> : <ArrowDownRight className="w-6 h-6" />}
-                    </div>
-                    <div>
-                      <h3 className="text-xl font-black text-primary uppercase">
-                        {editingId ? "Editar Despesa" : "Nova Despesa"}
-                      </h3>
-                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
-                        {editingId ? "Alterar Lançamento" : "Lançamento de Gastos"}
-                      </p>
-                    </div>
-                  </div>
-                  <button 
-                    onClick={() => {
-                      setShowAddModal(false);
-                      setEditingId(null);
-                      resetForm();
-                    }} 
-                    className="p-2 hover:bg-white rounded-xl transition-all"
-                  >
-                    <X className="w-5 h-5 text-slate-400" />
-                  </button>
-                </div>
-              </div>
-
-              <form onSubmit={handleAddExpense} className="p-8 space-y-6">
-                <div className="space-y-1">
-                  <label className="text-[10px] font-black text-slate-400 uppercase ml-2 tracking-widest">Descrição da Despesa</label>
-                  <input 
-                    type="text"
-                    required
-                    value={description}
-                    onChange={(e) => setDescription(e.target.value)}
-                    placeholder="Ex: Aluguel da Loja, Luz, Internet..."
-                    className="w-full h-16 bg-slate-50 border-2 border-transparent focus:border-accent/20 rounded-2xl px-6 font-black text-slate-800 transition-all outline-none"
-                  />
-                </div>
-
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-1">
-                    <label className="text-[10px] font-black text-slate-400 uppercase ml-2 tracking-widest">Valor Pagamento</label>
-                    <div className="relative">
-                      <div className="absolute left-6 top-1/2 -translate-y-1/2 text-slate-400 font-black">R$</div>
-                      <input 
-                        type="number"
-                        step="0.01"
-                        required
-                        value={amount}
-                        onChange={(e) => setAmount(e.target.value)}
-                        placeholder="0,00"
-                        className="w-full h-16 bg-slate-50 border-2 border-transparent focus:border-accent/20 rounded-2xl pl-12 pr-6 font-black text-slate-800 transition-all outline-none"
-                      />
-                    </div>
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-[10px] font-black text-slate-400 uppercase ml-2 tracking-widest">Data do Gasto</label>
-                    <input 
-                      type="datetime-local"
-                      required
-                      value={date}
-                      onChange={(e) => setDate(e.target.value)}
-                      className="w-full h-16 bg-slate-50 border-2 border-transparent focus:border-accent/20 rounded-2xl px-6 font-black text-slate-800 transition-all outline-none"
-                    />
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-1">
-                    <label className="text-[10px] font-black text-slate-400 uppercase ml-2 tracking-widest">Meio de Pagamento</label>
-                    <select 
-                      value={paymentMethod}
-                      onChange={(e) => setPaymentMethod(e.target.value)}
-                      className="w-full h-16 bg-slate-50 border-2 border-transparent focus:border-accent/20 rounded-2xl px-6 font-black text-slate-800 transition-all outline-none appearance-none"
-                    >
-                      <option value="dinheiro">Dinheiro</option>
-                      <option value="pix">PIX</option>
-                      <option value="cartão">Cartão</option>
-                      <option value="transferência">Transf.</option>
-                    </select>
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-[10px] font-black text-slate-400 uppercase ml-2 tracking-widest">Status Pagamento</label>
-                    <select 
-                      value={status}
-                      onChange={(e) => setStatus(e.target.value as any)}
-                      className="w-full h-16 bg-slate-50 border-2 border-transparent focus:border-accent/20 rounded-2xl px-6 font-black text-slate-800 transition-all outline-none appearance-none"
-                    >
-                      <option value="paid">Já Pago ✅</option>
-                      <option value="pending">A Pagar (Futuro) ⏳</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div className="space-y-1">
-                  <label className="text-[10px] font-black text-slate-400 uppercase ml-2 tracking-widest">Categoria</label>
-                  <select 
-                    value={category}
-                    onChange={(e) => setCategory(e.target.value as any)}
-                    className="w-full h-16 bg-slate-50 border-2 border-transparent focus:border-accent/20 rounded-2xl px-6 font-black text-slate-800 transition-all outline-none appearance-none"
-                  >
-                    <option value="operacional">Operacional</option>
-                    <option value="pessoal">Pessoal</option>
-                    <option value="manutenção">Manutenção</option>
-                    <option value="outros">Outros</option>
-                  </select>
-                </div>
-
-                <button 
-                  type="submit"
-                  disabled={submitting}
-                  className={cn(
-                    "w-full h-18 text-white font-black rounded-2xl shadow-2xl transition-all flex items-center justify-center gap-3 disabled:opacity-50 uppercase tracking-widest text-sm mt-4",
-                    editingId ? "bg-accent shadow-accent/30" : "bg-danger shadow-danger/30"
-                  )}
-                >
-                  {submitting ? <Loader2 className="w-5 h-5 animate-spin" /> : <CheckCircle2 className="w-6 h-6" />}
-                  {editingId ? "Salvar Alterações" : "Confirmar Lançamento"}
-                </button>
-              </form>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
     </div>
   );
 }

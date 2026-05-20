@@ -22,6 +22,7 @@ const SalesPending = React.lazy(() => import('@/src/pages/SalesPending'));
 const PurchasesPending = React.lazy(() => import('@/src/pages/PurchasesPending'));
 const Finances = React.lazy(() => import('@/src/pages/Finances'));
 const Expenses = React.lazy(() => import('@/src/pages/Expenses'));
+const ExpenseForm = React.lazy(() => import('@/src/pages/ExpenseForm'));
 const Reports = React.lazy(() => import('@/src/pages/Reports'));
 const Clients = React.lazy(() => import('@/src/pages/Clients'));
 const Suppliers = React.lazy(() => import('@/src/pages/Suppliers'));
@@ -108,6 +109,18 @@ export default function App() {
             <Route path="/despesas" element={
               <ProtectedRoute>
                 <Layout><Expenses /></Layout>
+              </ProtectedRoute>
+            } />
+
+            <Route path="/despesas/nova" element={
+              <ProtectedRoute>
+                <Layout><ExpenseForm /></Layout>
+              </ProtectedRoute>
+            } />
+
+            <Route path="/despesas/editar/:id" element={
+              <ProtectedRoute>
+                <Layout><ExpenseForm /></Layout>
               </ProtectedRoute>
             } />
 

@@ -44,7 +44,7 @@ const menuItems: MenuItem[] = [
     label: 'Despesas', 
     icon: Minus,
     children: [
-      { path: '/despesas?new=true', label: 'Nova Despesa', icon: Plus },
+      { path: '/despesas/nova', label: 'Nova Despesa', icon: Plus },
       { path: '/despesas', label: 'Histórico de Despesas', icon: FileText },
     ]
   },

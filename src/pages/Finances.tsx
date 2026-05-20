@@ -397,8 +397,10 @@ export default function Finances() {
   const confirmCloseCash = async () => {
     if (!activeSession || !profile || submitting) return;
 
-    const expectedBalance = activeSession.openingBalance + stats.totalSales + stats.totalSupplies - stats.totalWithdrawals;
-    const realBalance = Number(closingAmountReal) || expectedBalance;
+    const totalInflows = movements.filter(m => m.type === 'in').reduce((sum, m) => sum + m.amount, 0);
+    const totalOutflows = movements.filter(m => m.type === 'out').reduce((sum, m) => sum + m.amount, 0);
+    const expectedBalance = activeSession.openingBalance + totalInflows - totalOutflows;
+    const realBalance = closingAmountReal !== '' ? Number(closingAmountReal) : expectedBalance;
     const difference = realBalance - expectedBalance;
 
     try {
@@ -431,7 +433,9 @@ export default function Finances() {
     );
   }
 
-  const saldoAtual = activeSession ? (activeSession.openingBalance + stats.dinheiroIn + stats.totalSupplies - stats.totalWithdrawals - stats.dinheiroOut) : 0;
+  const totalInflows = movements.filter(m => m.type === 'in').reduce((sum, m) => sum + m.amount, 0);
+  const totalOutflows = movements.filter(m => m.type === 'out').reduce((sum, m) => sum + m.amount, 0);
+  const saldoAtual = activeSession ? (activeSession.openingBalance + totalInflows - totalOutflows) : 0;
   const saldoTotal = activeSession ? (activeSession.openingBalance + stats.totalSales + stats.totalSupplies - stats.totalWithdrawals - stats.totalPurchases) : 0;
 
   const handleDeleteMovement = async (m: Movement) => {
@@ -640,7 +644,7 @@ export default function Finances() {
             ) : (
               <div className="space-y-6 px-1">
                 <div className="space-y-4">
-                  <StatBox label="Saldo em Dinheiro (Físico)" value={saldoAtual} icon={DollarSign} iconColor="text-white" active />
+                  <StatBox label="Saldo do Caixa" value={saldoAtual} icon={DollarSign} iconColor="text-white" active />
                   <div className="grid grid-cols-2 gap-4">
                     <StatBox label="Vendas do Dia" value={stats.totalSales} icon={TrendingUp} iconColor="text-gray-400" />
                     <StatBox label="Lucro de Hoje" value={stats.lucroHoje} icon={TrendingUp} iconColor="text-gray-400" />

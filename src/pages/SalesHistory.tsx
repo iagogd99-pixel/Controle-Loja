@@ -681,7 +681,7 @@ export default function SalesHistory() {
                         <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1 flex items-center gap-1">
                           <CreditCard className="w-3 h-3" /> Método
                         </p>
-                        <p className="text-[10px] font-black text-slate-800 uppercase leading-tight">
+                        <div className="text-[10px] font-black text-slate-800 uppercase leading-tight">
                           {selectedSale.isSplitPayment ? (
                             <>
                               <div className="flex justify-between items-center">
@@ -723,7 +723,7 @@ export default function SalesHistory() {
                               </span>
                             </div>
                           )}
-                        </p>
+                        </div>
                       </div>
                     </div>
 
