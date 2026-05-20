@@ -222,18 +222,22 @@ export default function Products() {
                  {allSizes.length > 0 ? (
                    allSizes.map(size => {
                      const isAvailable = product.sizes?.includes(size) || product.size === size;
+                     const sizeQty = product.sizeStock?.[size];
+                     const isOutOfStock = isAvailable && sizeQty !== undefined && sizeQty <= 0;
                      return (
                        <div 
                          key={size}
                          className={cn(
                            "min-w-[16px] h-4 px-1 flex items-center justify-center rounded-[4px] border text-[7px] font-bold uppercase transition-all relative",
                            isAvailable 
-                             ? "bg-slate-50 border-slate-200 text-slate-700" 
+                             ? isOutOfStock
+                                ? "bg-slate-50 border-slate-200 text-slate-400 opacity-50 overflow-hidden"
+                                : "bg-slate-50 border-slate-200 text-slate-700" 
                              : "bg-transparent border-slate-100 text-slate-300 opacity-40 overflow-hidden"
                          )}
                        >
-                         {size}
-                         {!isAvailable && (
+                         <span className={isOutOfStock ? "line-through" : ""}>{size}</span>
+                         {(!isAvailable || isOutOfStock) && (
                            <div className="absolute inset-0 flex items-center justify-center">
                              <div className="w-full h-[1px] bg-slate-300 -rotate-45" />
                            </div>
@@ -337,6 +341,7 @@ export default function Products() {
                         {allSizes.map(size => {
                           const isAvailable = selectedProduct.sizes?.includes(size) || selectedProduct.size === size;
                           const sizeQty = selectedProduct.sizeStock?.[size];
+                          const isOutOfStock = isAvailable && sizeQty !== undefined && sizeQty <= 0;
                           
                           return (
                             <div 
@@ -344,11 +349,13 @@ export default function Products() {
                               className={cn(
                                 "min-w-[48px] h-14 px-2 flex flex-col items-center justify-center rounded-xl border text-[10px] font-black uppercase transition-all relative overflow-hidden",
                                 isAvailable 
-                                  ? "bg-white border-primary text-primary shadow-sm" 
+                                  ? isOutOfStock
+                                    ? "bg-slate-50 border-slate-200 text-slate-400 opacity-60"
+                                    : "bg-white border-primary text-primary shadow-sm" 
                                   : "bg-transparent border-slate-100 text-slate-300 opacity-40"
                               )}
                             >
-                              <span className="text-[10px]">{size}</span>
+                              <span className={cn("text-[10px]", isOutOfStock && "line-through")}>{size}</span>
                               {isAvailable && (
                                 <div className="flex flex-col items-center">
                                   <span className="text-[6px] font-bold text-slate-400 mt-0.5">
@@ -357,16 +364,16 @@ export default function Products() {
                                   {sizeQty !== undefined && (
                                     <span className={cn(
                                       "text-[8px] font-black px-1.5 rounded-full mt-0.5",
-                                      sizeQty > 0 ? "bg-primary/10 text-primary" : "bg-danger/10 text-danger"
+                                      sizeQty > 0 ? "bg-primary/10 text-primary" : "bg-danger/10 text-danger line-through"
                                     )}>
                                       {sizeQty} un
                                     </span>
                                   )}
                                 </div>
                               )}
-                              {!isAvailable && (
-                                <div className="absolute inset-0 flex items-center justify-center">
-                                  <div className="w-full h-[1px] bg-slate-300 -rotate-45" />
+                              {(!isAvailable || isOutOfStock) && (
+                                <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                                  <div className="w-full h-[1px] bg-slate-300 dark:bg-slate-700 -rotate-45" />
                                 </div>
                               )}
                             </div>

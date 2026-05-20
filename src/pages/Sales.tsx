@@ -438,7 +438,7 @@ export default function Sales() {
                               return (
                                 <span key={size} className={cn(
                                   "px-1.5 py-0.5 text-[8px] font-bold rounded uppercase flex items-center gap-1",
-                                  sizeStockValue === 0 ? "bg-red-50 text-red-500" : "bg-slate-100 text-slate-500"
+                                  sizeStockValue === 0 ? "bg-red-50 text-red-500 line-through" : "bg-slate-100 text-slate-500"
                                 )}>
                                   {size}
                                   {sizeStockValue !== undefined && (
@@ -477,15 +477,20 @@ export default function Sales() {
                                       }}
                                       disabled={isOutOfStock}
                                       className={cn(
-                                        "px-2 py-1 rounded-sm text-[8px] font-black uppercase transition-all flex items-center gap-1",
+                                        "px-2 py-1 rounded-sm text-[8px] font-black uppercase transition-all flex items-center gap-1 relative overflow-hidden",
                                         isMatched
                                           ? "bg-accent text-white shadow-sm"
                                           : isOutOfStock 
-                                            ? "bg-red-50 text-red-300 cursor-not-allowed"
+                                            ? "bg-red-100/50 text-red-300 cursor-not-allowed line-through"
                                             : "bg-slate-100 text-slate-500 hover:bg-slate-200"
                                       )}
                                     >
                                       {size}
+                                      {isOutOfStock && (
+                                        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                                          <div className="w-full h-[1px] bg-red-300 -rotate-45" />
+                                        </div>
+                                      )}
                                       {sizeStockValue !== undefined && (
                                         <span className={cn(
                                           "text-[7px] font-bold",
