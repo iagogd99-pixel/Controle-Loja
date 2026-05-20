@@ -10,6 +10,7 @@ import {
   BarChart3,
   DollarSign,
   Truck,
+  Minus,
   Tag,
   LogOut,
   Mail,
@@ -18,7 +19,8 @@ import {
   Clock,
   ChevronDown,
   ChevronUp,
-  Plus
+  Plus,
+  FileText
 } from 'lucide-react';
 import { useAuth } from '@/src/contexts/AuthContext';
 import { auth } from '@/src/lib/firebase';
@@ -36,6 +38,15 @@ interface MenuItem {
 
 const menuItems: MenuItem[] = [
   { path: '/', label: 'Início', icon: LayoutDashboard },
+  { path: '/financas', label: 'Caixa', icon: DollarSign },
+  { 
+    label: 'Despesas', 
+    icon: Minus,
+    children: [
+      { path: '/despesas?new=true', label: 'Nova Despesa', icon: Plus },
+      { path: '/despesas', label: 'Histórico de Despesas', icon: FileText },
+    ]
+  },
   { 
     label: 'Vendas', 
     icon: ShoppingCart,
@@ -54,7 +65,6 @@ const menuItems: MenuItem[] = [
       { path: '/compras-pendentes', label: 'Compras a Pagar', icon: Clock },
     ]
   },
-  { path: '/financas', label: 'Finanças', icon: DollarSign },
   { path: '/produtos', label: 'Produtos / Estoque', icon: Package },
   { path: '/relatorios', label: 'Relatórios', icon: BarChart3 },
   { path: '/clientes', label: 'Clientes', icon: Users },

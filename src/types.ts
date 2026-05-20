@@ -92,9 +92,15 @@ export interface Sale {
   customerFee: number;
   shipping?: number;
   interest?: number;
+  interest2?: number;
   items: SaleItem[];
-  paymentMethod: 'dinheiro' | 'pix' | 'cartão' | 'transferência';
+  paymentMethod: string;
+  isSplitPayment?: boolean;
+  paymentMethod2?: string;
+  splitAmount1?: number;
+  splitAmount2?: number;
   installments?: number;
+  installments2?: number;
   installmentsList?: Installment[];
   userId: string;
   userName: string;
@@ -103,6 +109,7 @@ export interface Sale {
   timestamp: string;
   status: 'completed' | 'cancelled';
   paymentStatus: 'paid' | 'pending';
+  paymentStatus2?: 'paid' | 'pending';
 }
 
 export interface PurchaseItem {
@@ -130,14 +137,21 @@ export interface Purchase {
   fee: number;
   freight: number;
   interest: number;
+  interest2?: number;
   total: number;
   supplierId?: string;
   supplierName: string;
   timestamp: string;
   status: 'completed' | 'cancelled';
   paymentStatus: 'paid' | 'pending';
+  paymentStatus2?: 'paid' | 'pending';
   paymentMethod: string;
+  isSplitPayment?: boolean;
+  paymentMethod2?: string;
+  splitAmount1?: number;
+  splitAmount2?: number;
   installments: number;
+  installments2?: number;
   installmentsList?: Installment[];
   items: PurchaseItem[];
   itemsCount: number;
@@ -148,4 +162,18 @@ export interface Purchase {
 export interface Category {
   id: string;
   name: string;
+}
+
+export interface Expense {
+  id: string;
+  description: string;
+  amount: number;
+  paymentMethod: string;
+  category: 'operacional' | 'pessoal' | 'manutenção' | 'outros';
+  timestamp: string;
+  date: string;
+  userId: string;
+  userName: string;
+  purchaseId?: string;
+  supplierName?: string;
 }

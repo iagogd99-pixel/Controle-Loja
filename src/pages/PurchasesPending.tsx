@@ -74,16 +74,17 @@ export default function PurchasesPending() {
   useEffect(() => {
     const q = query(
       collection(db, 'purchases'), 
-      where('paymentStatus', '==', 'pending'),
       orderBy('timestamp', 'desc')
     );
     
     const unsubscribe = onSnapshot(q, (snapshot) => {
-      setPurchases(snapshot.docs.map(doc => ({ 
+      const allPurchases = snapshot.docs.map(doc => ({ 
         id: doc.id, 
         ...doc.data(),
         itemsCount: doc.data().items?.length || 0
-      } as Purchase)));
+      } as Purchase));
+      const pendingPurchases = allPurchases.filter(p => p.paymentStatus === 'pending' || p.paymentStatus2 === 'pending');
+      setPurchases(pendingPurchases);
       setLoading(false);
     }, (error) => {
       console.error("Error fetching pending purchases:", error);
@@ -273,10 +274,13 @@ export default function PurchasesPending() {
     }
   };
 
-  const filteredPurchases = purchases.filter(p => 
-    p.id.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    (p.supplierName || '').toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const filteredPurchases = purchases.filter(p => {
+    const matchesSearch = p.id.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (p.supplierName || '').toLowerCase().includes(searchTerm.toLowerCase());
+    
+    // Additional filtering logic if needed (e.g. by supplier)
+    return matchesSearch;
+  });
 
   return (
     <div className="space-y-4">
@@ -293,7 +297,10 @@ export default function PurchasesPending() {
         
         <div className="bg-danger/10 px-4 py-2 rounded-xl border border-danger/20 flex items-center gap-2">
            <AlertCircle className="w-4 h-4 text-danger" />
-           <p className="text-[10px] font-black text-danger uppercase">Total a Pagar: {formatCurrency(purchases.reduce((acc, p) => acc + p.total, 0))}</p>
+           <p className="text-[10px] font-black text-danger uppercase">Total a Pagar: {formatCurrency(purchases.reduce((acc, p) => {
+             const amt = (p.paymentStatus === 'pending' ? (p.splitAmount1 || p.total) : 0) + (p.paymentStatus2 === 'pending' ? (p.splitAmount2 || 0) : 0);
+             return acc + amt;
+           }, 0))}</p>
         </div>
       </div>
 
@@ -343,10 +350,24 @@ export default function PurchasesPending() {
 
               <div className="pt-3 border-t border-slate-50 mt-3 flex justify-between items-end">
                 <div className="flex flex-col">
-                  <span className="text-[8px] font-black text-slate-300 uppercase tracking-widest mb-1 leading-none">Total</span>
-                  <span className="text-base font-black text-danger leading-none">{formatCurrency(purchase.total)}</span>
+                  <span className="text-[8px] font-black text-slate-300 uppercase tracking-widest mb-1 leading-none">Pendente</span>
+                  <span className="text-base font-black text-danger leading-none">
+                    {formatCurrency(
+                      (purchase.paymentStatus === 'pending' ? (purchase.splitAmount1 || purchase.total) : 0) + 
+                      (purchase.paymentStatus2 === 'pending' ? (purchase.splitAmount2 || 0) : 0)
+                    )}
+                  </span>
                 </div>
-                <div className="text-right">
+                <div className="text-right flex flex-col items-end">
+                  <span className="text-[8px] font-black text-slate-300 uppercase tracking-widest leading-none mb-1">
+                    {purchase.isSplitPayment ? (
+                      <>
+                        {purchase.paymentStatus === 'pending' && purchase.paymentMethod}
+                        {purchase.paymentStatus === 'pending' && purchase.paymentStatus2 === 'pending' && ' + '}
+                        {purchase.paymentStatus2 === 'pending' && purchase.paymentMethod2}
+                      </>
+                    ) : purchase.paymentMethod}
+                  </span>
                   <span className="text-[8px] font-black text-slate-300 uppercase tracking-widest leading-none">{purchase.itemsCount} PRODS</span>
                 </div>
               </div>
@@ -448,6 +469,49 @@ export default function PurchasesPending() {
                       <FileText className="w-3 h-3" /> Itens
                     </p>
                     <p className="text-xs font-black text-slate-800 uppercase">{selectedPurchase.itemsCount} produtos</p>
+                  </div>
+                  <div className="p-4 bg-slate-50 rounded-3xl border border-slate-100">
+                    <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1 flex items-center gap-1">
+                      <CreditCard className="w-3 h-3" /> Pagamento
+                    </p>
+                    <div className="text-[10px] font-black text-slate-800 uppercase leading-tight">
+                      {selectedPurchase.isSplitPayment ? (
+                        <>
+                          <div className="flex justify-between items-center">
+                            <span>
+                              {selectedPurchase.paymentMethod}: {formatCurrency(selectedPurchase.splitAmount1 || 0)}
+                            </span>
+                            <span className={cn(
+                              "px-1.5 py-0.5 rounded-full text-[8px] ml-2",
+                              selectedPurchase.paymentStatus === 'paid' ? "bg-success/10 text-success" : "bg-danger/10 text-danger"
+                            )}>
+                              {selectedPurchase.paymentStatus === 'paid' ? 'PAGO' : 'PENDENTE'}
+                            </span>
+                          </div>
+                          <div className="mt-1 flex justify-between items-center">
+                            <span>
+                              {selectedPurchase.paymentMethod2}: {formatCurrency(selectedPurchase.splitAmount2 || 0)}
+                            </span>
+                            <span className={cn(
+                              "px-1.5 py-0.5 rounded-full text-[8px] ml-2",
+                              selectedPurchase.paymentStatus2 === 'paid' ? "bg-success/10 text-success" : "bg-danger/10 text-danger"
+                            )}>
+                              {selectedPurchase.paymentStatus2 === 'paid' ? 'PAGO' : 'PENDENTE'}
+                            </span>
+                          </div>
+                        </>
+                      ) : (
+                        <div className="flex justify-between items-center">
+                          <span>{selectedPurchase.paymentMethod || 'Dinheiro'}</span>
+                          <span className={cn(
+                            "px-1.5 py-0.5 rounded-full text-[8px] ml-2",
+                            selectedPurchase.paymentStatus === 'paid' ? "bg-success/10 text-success" : "bg-danger/10 text-danger"
+                          )}>
+                            {selectedPurchase.paymentStatus === 'paid' ? 'PAGO' : 'PENDENTE'}
+                          </span>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
 

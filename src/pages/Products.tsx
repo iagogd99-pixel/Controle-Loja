@@ -15,7 +15,8 @@ import {
   Boxes,
   BarChart2,
   Tag,
-  ChevronRight
+  ChevronRight,
+  DollarSign
 } from 'lucide-react';
 import { 
   collection, 
@@ -318,31 +319,7 @@ export default function Products() {
                     <DetailItem label="SKU / Cód." value={selectedProduct.sku} icon={Tag} />
                     <DetailItem label="Status" value={selectedProduct.status === 'active' ? 'Ativo' : 'Inativo'} theme={selectedProduct.status === 'active' ? 'success' : 'danger'} icon={Info} />
                     <DetailItem label="Venda" value={formatCurrency(selectedProduct.salePrice)} highlight icon={BarChart2} />
-                    <div className="bg-slate-50 dark:bg-slate-800/50 p-3 rounded-2xl border border-slate-100 dark:border-slate-800 flex flex-col col-span-2">
-                      <div className="flex items-center justify-between mb-2 opacity-40">
-                        <span className="text-[8px] font-black uppercase tracking-widest dark:text-slate-400">Custo Efetivo</span>
-                        <Clock className="w-2.5 h-2.5 dark:text-slate-400" />
-                      </div>
-                      <div className="flex items-end justify-between">
-                        <span className="text-sm font-black text-slate-800 dark:text-slate-100">{formatCurrency(selectedProduct.costPrice)}</span>
-                        <div className="text-right space-y-0.5">
-                          <p className="text-[7px] font-bold text-slate-400 uppercase tracking-tighter">
-                            Base: {formatCurrency(selectedProduct.baseCostPrice || selectedProduct.costPrice)}
-                          </p>
-                          <p className="text-[7px] font-bold text-slate-400 uppercase tracking-tighter">
-                            Frete: {formatCurrency(selectedProduct.shippingCostPrice || 0)}
-                          </p>
-                          <p className="text-[7px] font-bold text-slate-400 uppercase tracking-tighter">
-                            Juros: {formatCurrency(selectedProduct.interestCostPrice || 0)}
-                          </p>
-                          {(selectedProduct.overheadCostPrice || 0) - (selectedProduct.shippingCostPrice || 0) - (selectedProduct.interestCostPrice || 0) !== 0 && (
-                            <p className="text-[7px] font-bold text-slate-400 uppercase tracking-tighter">
-                              Outros: {formatCurrency((selectedProduct.overheadCostPrice || 0) - (selectedProduct.shippingCostPrice || 0) - (selectedProduct.interestCostPrice || 0))}
-                            </p>
-                          )}
-                        </div>
-                      </div>
-                    </div>
+                    <DetailItem label="Custo" value={formatCurrency(selectedProduct.costPrice)} icon={DollarSign} />
                     <DetailItem 
                       label="Estoque Atual" 
                       value={`${selectedProduct.stock} unidades`} 

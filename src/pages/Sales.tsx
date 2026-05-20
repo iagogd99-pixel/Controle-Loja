@@ -48,9 +48,17 @@ export default function Sales() {
   const [discount, setDiscount] = useState<number>(0);
   const [storeFee, setStoreFee] = useState<number>(0);
   const [customerFee, setCustomerFee] = useState<number>(0);
+  const [discount2, setDiscount2] = useState<number>(0);
+  const [storeFee2, setStoreFee2] = useState<number>(0);
+  const [customerFee2, setCustomerFee2] = useState<number>(0);
   const [installments, setInstallments] = useState<number>(1);
-  const [paymentMethod, setPaymentMethod] = useState<'dinheiro' | 'pix' | 'cartão' | 'transferência'>('dinheiro');
+  const [installments2, setInstallments2] = useState<number>(1);
+  const [paymentMethod, setPaymentMethod] = useState<'dinheiro' | 'pix' | 'cartão' | 'transferência' | string>('dinheiro');
+  const [isSplitPayment, setIsSplitPayment] = useState(false);
+  const [paymentMethod2, setPaymentMethod2] = useState<'dinheiro' | 'pix' | 'cartão' | 'transferência' | string>('pix');
+  const [splitAmount1, setSplitAmount1] = useState<number>(0);
   const [paymentStatus, setPaymentStatus] = useState<'paid' | 'pending'>('paid');
+  const [paymentStatus2, setPaymentStatus2] = useState<'paid' | 'pending'>('paid');
   const [isFinishing, setIsFinishing] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
@@ -136,7 +144,7 @@ export default function Sales() {
   };
 
   const cartSubtotal = cart.reduce((acc, item) => acc + item.total, 0);
-  const cartTotal = Math.max(0, cartSubtotal - discount + customerFee);
+  const cartTotal = Math.max(0, cartSubtotal - (discount + discount2) + (customerFee + customerFee2));
 
   const handleFinishSale = async () => {
     if (cart.length === 0 || !profile) return;
@@ -147,17 +155,46 @@ export default function Sales() {
         ? (customerName || 'Cliente Direto')
         : (clients.find(c => c.id === selectedClientId)?.name || 'Cliente');
 
-      const numInstallments = (paymentMethod === 'cartão' || paymentMethod === 'transferência') ? installments : 1;
+      const isM1Installment = paymentMethod === 'cartão' || paymentMethod === 'transferência';
+      const isM2Installment = isSplitPayment && (paymentMethod2 === 'cartão' || paymentMethod2 === 'transferência');
+      
+      const numInstallments1 = isM1Installment ? installments : 1;
+      const numInstallments2 = isM2Installment ? installments2 : 1;
+      
+      const isM1Pending = paymentStatus === 'pending';
+      const isM2Pending = isSplitPayment && paymentStatus2 === 'pending';
       
       const installmentsList = [];
-      if (paymentStatus === 'pending') {
-        const partAmount = cartTotal / numInstallments;
-        for (let i = 1; i <= numInstallments; i++) {
+      
+      // Part 1
+      if (isM1Pending) {
+        const amount1 = isSplitPayment ? (splitAmount1 - discount + customerFee) : cartTotal;
+        const partAmount1 = amount1 / numInstallments1;
+        for (let i = 1; i <= numInstallments1; i++) {
           const dueDate = getBrasiliaTime();
           dueDate.setMonth(dueDate.getMonth() + i);
+          dueDate.setDate(10);
           installmentsList.push({
             id: i,
-            amount: Number(partAmount.toFixed(2)),
+            amount: Number(partAmount1.toFixed(2)),
+            dueDate: format(dueDate, "yyyy-MM-dd'T'HH:mm:ss.SSSxxx", { timeZone: 'America/Sao_Paulo' }),
+            status: 'pending'
+          });
+        }
+      }
+      
+      // Part 2
+      if (isM2Pending) {
+        const amount2 = Math.max(0, (cartSubtotal - splitAmount1) - discount2 + customerFee2);
+        const partAmount2 = amount2 / numInstallments2;
+        const startId = isM1Pending ? numInstallments1 + 1 : 1;
+        for (let i = 1; i <= numInstallments2; i++) {
+          const dueDate = getBrasiliaTime();
+          dueDate.setMonth(dueDate.getMonth() + i);
+          dueDate.setDate(10);
+          installmentsList.push({
+            id: startId + i - 1,
+            amount: Number(partAmount2.toFixed(2)),
             dueDate: format(dueDate, "yyyy-MM-dd'T'HH:mm:ss.SSSxxx", { timeZone: 'America/Sao_Paulo' }),
             status: 'pending'
           });
@@ -168,13 +205,22 @@ export default function Sales() {
       const sale = {
         subtotal: cartSubtotal,
         discount,
+        discount2: isSplitPayment ? discount2 : 0,
         storeFee,
+        storeFee2: isSplitPayment ? storeFee2 : 0,
         customerFee,
+        customerFee2: isSplitPayment ? customerFee2 : 0,
         total: cartTotal,
         items: cart,
         paymentMethod,
+        isSplitPayment,
+        paymentMethod2: isSplitPayment ? paymentMethod2 : null,
+        splitAmount1: isSplitPayment ? (splitAmount1 - discount + customerFee) : 0,
+        splitAmount2: isSplitPayment ? Math.max(0, (cartSubtotal - splitAmount1) - discount2 + customerFee2) : 0,
         paymentStatus,
-        installments: numInstallments,
+        paymentStatus2: isSplitPayment ? paymentStatus2 : null,
+        installments: numInstallments1,
+        installments2: isSplitPayment ? installments2 : 1,
         installmentsList: installmentsList.length > 0 ? installmentsList : null,
         clientId: selectedClientId === 'unregistered' ? null : selectedClientId,
         customerName: finalCustomerName,
@@ -187,22 +233,55 @@ export default function Sales() {
       const saleRef = await addDoc(collection(db, 'sales'), sale);
       const saleId = saleRef.id;
       
-      // 1.1 Record Financial Movement for the cash - ONLY if PAID
-      if (paymentStatus === 'paid') {
-        // Store fee is deducted from the net received by the store
-        const amountReceived = cartTotal - storeFee;
+      // 1.1 Record Financial Movement for the cash
+      if (isSplitPayment) {
+        const amount1 = splitAmount1 - discount + customerFee;
+        const amount2 = Math.max(0, (cartSubtotal - splitAmount1) - discount2 + customerFee2);
+        
+        if (amount1 > 0 && paymentStatus === 'paid') {
+          await addDoc(collection(db, 'cash_movements'), {
+            amount: amount1,
+            type: 'in',
+            category: 'venda',
+            paymentMethod: paymentMethod,
+            reason: `Venda #${saleId.slice(-4)} (Parte 1/2 - ${paymentMethod.toUpperCase()})`,
+            userId: profile.uid,
+            userName: profile.name,
+            saleId: saleId,
+            timestamp: getBrasiliaISO()
+          });
+        }
 
-        await addDoc(collection(db, 'cash_movements'), {
-          amount: amountReceived,
-          type: 'in',
-          category: 'venda',
-          paymentMethod: paymentMethod,
-          reason: `Venda #${saleId.slice(-4)} (${paymentMethod.toUpperCase()})`,
-          userId: profile.uid,
-          userName: profile.name,
-          saleId: saleId,
-          timestamp: getBrasiliaISO()
-        });
+        if (amount2 > 0 && paymentStatus2 === 'paid') {
+          await addDoc(collection(db, 'cash_movements'), {
+            amount: amount2,
+            type: 'in',
+            category: 'venda',
+            paymentMethod: paymentMethod2,
+            reason: `Venda #${saleId.slice(-4)} (Parte 2/2 - ${paymentMethod2.toUpperCase()})`,
+            userId: profile.uid,
+            userName: profile.name,
+            saleId: saleId,
+            timestamp: getBrasiliaISO()
+          });
+        }
+      } else {
+        if (paymentStatus === 'paid') {
+          // Store fee is deducted from the net received by the store
+          const amountReceived = cartTotal - storeFee;
+
+          await addDoc(collection(db, 'cash_movements'), {
+            amount: amountReceived,
+            type: 'in',
+            category: 'venda',
+            paymentMethod: paymentMethod,
+            reason: `Venda #${saleId.slice(-4)} (${paymentMethod.toUpperCase()})`,
+            userId: profile.uid,
+            userName: profile.name,
+            saleId: saleId,
+            timestamp: getBrasiliaISO()
+          });
+        }
       }
 
       // 2. Update Stock
@@ -239,7 +318,11 @@ export default function Sales() {
       setDiscount(0);
       setStoreFee(0);
       setCustomerFee(0);
+      setDiscount2(0);
+      setStoreFee2(0);
+      setCustomerFee2(0);
       setInstallments(1);
+      setInstallments2(1);
       setSelectedClientId('unregistered');
       
       // Refresh local stock
@@ -579,101 +662,222 @@ export default function Sales() {
         </div>
 
         <div className="p-4 bg-slate-50 rounded-b-[40px] space-y-3 shadow-[0_-10px_20px_rgba(0,0,0,0.02)]">
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <p className="text-[9px] font-bold text-slate-400 uppercase mb-1 pl-1">Desconto (R$)</p>
-              <input 
-                type="number"
-                value={discount || ''}
-                onChange={(e) => setDiscount(Number(e.target.value))}
-                placeholder="0,00"
-                className="w-full px-3 py-1.5 bg-white border border-gray-100 rounded-lg text-xs font-bold focus:ring-1 focus:ring-accent outline-none"
-              />
-            </div>
-            <div>
-              <p className="text-[9px] font-bold text-slate-400 uppercase mb-1 pl-1">Taxa Loja (R$)</p>
-              <input 
-                type="number"
-                value={storeFee || ''}
-                onChange={(e) => setStoreFee(Number(e.target.value))}
-                placeholder="Desconto no recebimento"
-                className="w-full px-3 py-1.5 bg-white border border-gray-100 rounded-lg text-xs font-bold focus:ring-1 focus:ring-accent outline-none"
-              />
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <p className="text-[9px] font-bold text-slate-400 uppercase mb-1 pl-1">Taxa Cliente (R$)</p>
-              <input 
-                type="number"
-                value={customerFee || ''}
-                onChange={(e) => setCustomerFee(Number(e.target.value))}
-                placeholder="Adicionado ao total"
-                className="w-full px-3 py-1.5 bg-white border border-gray-100 rounded-lg text-xs font-bold focus:ring-1 focus:ring-accent outline-none"
-              />
-            </div>
-            <div>
-              <p className="text-[9px] font-bold text-slate-400 uppercase mb-1 pl-1">Parcelas</p>
-              <select 
-                value={installments}
-                onChange={(e) => setInstallments(Number(e.target.value))}
-                className="w-full px-3 py-1.5 bg-white border border-gray-100 rounded-lg text-xs font-bold focus:ring-1 focus:ring-accent outline-none"
-              >
-                {[1,2,3,4,5,6,7,8,9,10,11,12].map(n => (
-                  <option key={n} value={n}>{n}x</option>
-                ))}
-              </select>
-            </div>
-          </div>
-
           <div className="space-y-1">
-            <p className="text-[9px] font-bold text-slate-400 uppercase pl-1">Tipo de Pagamento</p>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="flex items-center justify-between px-1">
+              <p className="text-[9px] font-bold text-slate-400 uppercase">Pagamento</p>
               <button 
-                onClick={() => setPaymentStatus('paid')}
+                onClick={() => {
+                  setIsSplitPayment(!isSplitPayment);
+                  if (!isSplitPayment) setSplitAmount1(cartTotal / 2);
+                }}
                 className={cn(
                   "py-2 px-3 rounded-xl border text-[10px] font-bold transition-all uppercase tracking-widest",
-                  paymentStatus === 'paid' ? "bg-accent border-accent text-white shadow-lg" : "bg-white border-gray-200 text-slate-600"
+                  isSplitPayment ? "bg-accent border-accent text-white shadow-lg" : "bg-white border-gray-200 text-slate-600 hover:border-accent"
                 )}
               >
-                Pago Agora
-              </button>
-              <button 
-                onClick={() => setPaymentStatus('pending')}
-                className={cn(
-                  "py-2 px-3 rounded-xl border text-[10px] font-bold transition-all uppercase tracking-widest",
-                  paymentStatus === 'pending' ? "bg-danger border-danger text-white shadow-lg" : "bg-white border-gray-200 text-slate-600"
-                )}
-              >
-                A Receber
+                {isSplitPayment ? 'Meios Combinados' : 'Combinar Meios'}
               </button>
             </div>
-          </div>
 
-          <div className="space-y-1">
-            <p className="text-[9px] font-bold text-slate-400 uppercase pl-1">Pagamento</p>
-            <div className="grid grid-cols-4 gap-1.5">
-              <PaymentButton 
-                active={paymentMethod === 'dinheiro'} 
-                onClick={() => setPaymentMethod('dinheiro')}
-                label="Dinheiro"
-              />
-              <PaymentButton 
-                active={paymentMethod === 'pix'} 
-                onClick={() => setPaymentMethod('pix')}
-                label="PIX"
-              />
-              <PaymentButton 
-                active={paymentMethod === 'cartão'} 
-                onClick={() => setPaymentMethod('cartão')}
-                label="Cartão"
-              />
-              <PaymentButton 
-                active={paymentMethod === 'transferência'} 
-                onClick={() => setPaymentMethod('transferência')}
-                label="Transf."
-              />
+            <div className="space-y-3">
+              {/* First Method */}
+              <div className="space-y-1.5">
+                <div className="grid grid-cols-2 gap-2 mb-2">
+                  <button 
+                    onClick={() => setPaymentStatus('paid')}
+                    className={cn(
+                      "py-2 px-3 rounded-xl border text-[10px] font-bold transition-all uppercase tracking-widest",
+                      paymentStatus === 'paid' ? "bg-accent border-accent text-white shadow-lg" : "bg-white border-gray-200 text-slate-600"
+                    )}
+                  >
+                    Pago Agora
+                  </button>
+                  <button 
+                    onClick={() => setPaymentStatus('pending')}
+                    className={cn(
+                      "py-2 px-3 rounded-xl border text-[10px] font-bold transition-all uppercase tracking-widest",
+                      paymentStatus === 'pending' ? "bg-danger border-danger text-white shadow-lg" : "bg-white border-gray-200 text-slate-600"
+                    )}
+                  >
+                    A Receber
+                  </button>
+                </div>
+                {isSplitPayment && (
+                  <div className="flex justify-between items-center px-1">
+                    <span className="text-[8px] font-black text-slate-400 uppercase">Meio 1</span>
+                    <div className="flex items-center bg-white border border-slate-200 rounded-lg px-2 py-1 shadow-sm">
+                      <span className="text-[8px] font-bold text-slate-400 mr-1">R$</span>
+                      <input 
+                        type="number"
+                        value={splitAmount1 || ''}
+                        onChange={(e) => setSplitAmount1(Number(e.target.value))}
+                        placeholder="0.00"
+                        className="w-16 text-[10px] font-black text-slate-700 outline-none bg-transparent"
+                      />
+                    </div>
+                  </div>
+                )}
+                <div className="grid grid-cols-4 gap-1.5">
+                  {['dinheiro', 'pix', 'cartão', 'transferência'].map((method) => {
+                    const label = method === 'transferência' ? 'Transf.' : method.charAt(0).toUpperCase() + method.slice(1);
+                    return (
+                      <PaymentButton 
+                        key={`m1-${method}`}
+                        active={paymentMethod === method} 
+                        onClick={() => setPaymentMethod(method as any)}
+                        label={label}
+                      />
+                    );
+                  })}
+                </div>
+                {(paymentMethod === 'cartão' || paymentMethod === 'transferência') && (
+                  <div className="space-y-2 px-1">
+                    <div className="grid grid-cols-3 gap-2">
+                      <div>
+                        <p className="text-[8px] font-bold text-slate-400 uppercase mb-1">Desc. (R$)</p>
+                        <input 
+                          type="number"
+                          value={discount || ''}
+                          onChange={(e) => setDiscount(Number(e.target.value))}
+                          placeholder="0,00"
+                          className="w-full px-2 py-1 bg-white border border-slate-200 rounded-lg text-[10px] font-bold focus:ring-1 focus:ring-accent outline-none"
+                        />
+                      </div>
+                      <div>
+                        <p className="text-[8px] font-bold text-slate-400 uppercase mb-1">Juros (R$)</p>
+                        <input 
+                          type="number"
+                          value={customerFee || ''}
+                          onChange={(e) => setCustomerFee(Number(e.target.value))}
+                          placeholder="0,00"
+                          className="w-full px-2 py-1 bg-white border border-slate-200 rounded-lg text-[10px] font-bold focus:ring-1 focus:ring-accent outline-none"
+                        />
+                      </div>
+                      <div>
+                        <p className="text-[8px] font-bold text-slate-400 uppercase mb-1">Parcelas</p>
+                        <select 
+                          value={installments}
+                          onChange={(e) => setInstallments(Number(e.target.value))}
+                          className="w-full px-2 py-1 bg-white border border-slate-200 rounded-lg text-[10px] font-bold focus:ring-1 focus:ring-accent outline-none text-accent"
+                        >
+                          {[1,2,3,4,5,6,7,8,9,10,11,12].map(n => (
+                            <option key={n} value={n}>{n}x</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                    <div>
+                      <p className="text-[8px] font-bold text-slate-400 uppercase mb-1">Taxa Loja (R$)</p>
+                      <input 
+                        type="number"
+                        value={storeFee || ''}
+                        onChange={(e) => setStoreFee(Number(e.target.value))}
+                        placeholder="Desconto no recebimento"
+                        className="w-full px-2 py-1 bg-white border border-slate-200 rounded-lg text-[10px] font-bold focus:ring-1 focus:ring-accent outline-none"
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Second Method */}
+              {isSplitPayment && (
+                <motion.div 
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: 'auto' }}
+                  exit={{ opacity: 0, height: 0 }}
+                  className="space-y-1.5 pt-2 border-t border-slate-200/50"
+                >
+                  <div className="grid grid-cols-2 gap-2 mb-2">
+                    <button 
+                      onClick={() => setPaymentStatus2('paid')}
+                      className={cn(
+                        "py-2 px-3 rounded-xl border text-[10px] font-bold transition-all uppercase tracking-widest",
+                        paymentStatus2 === 'paid' ? "bg-accent border-accent text-white shadow-lg" : "bg-white border-gray-200 text-slate-600"
+                      )}
+                    >
+                      Pago Agora
+                    </button>
+                    <button 
+                      onClick={() => setPaymentStatus2('pending')}
+                      className={cn(
+                        "py-2 px-3 rounded-xl border text-[10px] font-bold transition-all uppercase tracking-widest",
+                        paymentStatus2 === 'pending' ? "bg-danger border-danger text-white shadow-lg" : "bg-white border-gray-200 text-slate-600"
+                      )}
+                    >
+                      A Receber
+                    </button>
+                  </div>
+                  <div className="flex justify-between items-center px-1">
+                    <span className="text-[8px] font-black text-slate-400 uppercase">Meio 2</span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[8px] font-bold text-slate-400">RESTANTE:</span>
+                      <span className="text-[10px] font-black text-accent">{formatCurrency(Math.max(0, (cartSubtotal - splitAmount1) - discount2 + customerFee2))}</span>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-4 gap-1.5">
+                    {['dinheiro', 'pix', 'cartão', 'transferência'].map((method) => {
+                      const label = method === 'transferência' ? 'Transf.' : method.charAt(0).toUpperCase() + method.slice(1);
+                      return (
+                        <PaymentButton 
+                          key={`m2-${method}`}
+                          active={paymentMethod2 === method} 
+                          onClick={() => setPaymentMethod2(method as any)}
+                          label={label}
+                        />
+                      );
+                    })}
+                  </div>
+                  {(paymentMethod2 === 'cartão' || paymentMethod2 === 'transferência') && (
+                    <div className="space-y-2 px-1">
+                      <div className="grid grid-cols-3 gap-2">
+                        <div>
+                          <p className="text-[8px] font-bold text-slate-400 uppercase mb-1">Desc. (R$)</p>
+                          <input 
+                            type="number"
+                            value={discount2 || ''}
+                            onChange={(e) => setDiscount2(Number(e.target.value))}
+                            placeholder="0,00"
+                            className="w-full px-2 py-1 bg-white border border-slate-200 rounded-lg text-[10px] font-bold focus:ring-1 focus:ring-accent outline-none"
+                          />
+                        </div>
+                        <div>
+                          <p className="text-[8px] font-bold text-slate-400 uppercase mb-1">Juros (R$)</p>
+                          <input 
+                            type="number"
+                            value={customerFee2 || ''}
+                            onChange={(e) => setCustomerFee2(Number(e.target.value))}
+                            placeholder="0,00"
+                            className="w-full px-2 py-1 bg-white border border-slate-200 rounded-lg text-[10px] font-bold focus:ring-1 focus:ring-accent outline-none"
+                          />
+                        </div>
+                        <div>
+                          <p className="text-[8px] font-bold text-slate-400 uppercase mb-1">Parcelas</p>
+                          <select 
+                            value={installments2}
+                            onChange={(e) => setInstallments2(Number(e.target.value))}
+                            className="w-full px-2 py-1 bg-white border border-slate-200 rounded-lg text-[10px] font-bold focus:ring-1 focus:ring-accent outline-none text-accent"
+                          >
+                            {[1,2,3,4,5,6,7,8,9,10,11,12].map(n => (
+                              <option key={n} value={n}>{n}x</option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+                      <div>
+                        <p className="text-[8px] font-bold text-slate-400 uppercase mb-1">Taxa Loja (R$)</p>
+                        <input 
+                          type="number"
+                          value={storeFee2 || ''}
+                          onChange={(e) => setStoreFee2(Number(e.target.value))}
+                          placeholder="Desconto no recebimento"
+                          className="w-full px-2 py-1 bg-white border border-slate-200 rounded-lg text-[10px] font-bold focus:ring-1 focus:ring-accent outline-none"
+                        />
+                      </div>
+                    </div>
+                  )}
+                </motion.div>
+              )}
             </div>
           </div>
 

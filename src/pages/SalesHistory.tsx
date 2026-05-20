@@ -479,8 +479,22 @@ export default function SalesHistory() {
                   {date.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
                 </p>
                 <div className="flex items-center justify-between mt-2 pt-2 border-t border-slate-50">
-                  <span className="text-[10px] font-black text-accent">{formatCurrency(sale.total)}</span>
-                  <span className="text-[8px] font-bold text-slate-400 uppercase">{sale.paymentMethod}</span>
+                  <span className="text-[10px] font-black text-accent">
+                    {formatCurrency(
+                      (sale.paymentStatus === 'paid' ? (sale.splitAmount1 || sale.total) : 0) + 
+                      (sale.paymentStatus2 === 'paid' ? (sale.splitAmount2 || 0) : 0)
+                    )}
+                  </span>
+                  <span className="text-[8px] font-bold text-slate-400 uppercase">
+                    {sale.isSplitPayment ? (
+                      <>
+                        {sale.paymentStatus === 'paid' && sale.paymentMethod}
+                        {sale.paymentStatus === 'paid' && sale.paymentStatus2 === 'paid' && ' + '}
+                        {sale.paymentStatus2 === 'paid' && sale.paymentMethod2}
+                        {(sale.paymentStatus === 'pending' && sale.paymentStatus2 === 'pending') && 'Pendente'}
+                      </>
+                    ) : (sale.paymentStatus === 'paid' ? sale.paymentMethod : 'Pendente')}
+                  </span>
                 </div>
               </div>
             </motion.div>
@@ -531,7 +545,12 @@ export default function SalesHistory() {
                     </div>
                     <div className="flex justify-between text-[10px] font-bold uppercase tracking-widest text-slate-400 mt-1">
                       <span>Método</span>
-                      <span>{selectedSale.paymentMethod}</span>
+                      <span>
+                        {selectedSale.isSplitPayment 
+                          ? `${selectedSale.paymentMethod} (${formatCurrency(selectedSale.splitAmount1 || 0)}${selectedSale.installments && selectedSale.installments > 1 ? ` ${selectedSale.installments}x` : ''}) + ${selectedSale.paymentMethod2} (${formatCurrency(selectedSale.splitAmount2 || 0)}${selectedSale.installments2 && selectedSale.installments2 > 1 ? ` ${selectedSale.installments2}x` : ''})`
+                          : `${selectedSale.paymentMethod}${selectedSale.installments && selectedSale.installments > 1 ? ` ${selectedSale.installments}x` : ''}`
+                        }
+                      </span>
                     </div>
                     <div className="flex justify-between text-[10px] font-bold uppercase tracking-widest text-slate-400 mt-1">
                       <span>Vendedor</span>
@@ -661,7 +680,49 @@ export default function SalesHistory() {
                         <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1 flex items-center gap-1">
                           <CreditCard className="w-3 h-3" /> Método
                         </p>
-                        <p className="text-xs font-black text-slate-800 uppercase">{selectedSale.paymentMethod}</p>
+                        <p className="text-[10px] font-black text-slate-800 uppercase leading-tight">
+                          {selectedSale.isSplitPayment ? (
+                            <>
+                              <div className="flex justify-between items-center">
+                                <span>
+                                  {selectedSale.paymentMethod}: {formatCurrency(selectedSale.splitAmount1 || 0)}
+                                  {selectedSale.installments && selectedSale.installments > 1 && ` (${selectedSale.installments}x)`}
+                                </span>
+                                <span className={cn(
+                                  "px-1.5 py-0.5 rounded-full text-[8px] ml-2",
+                                  selectedSale.paymentStatus === 'paid' ? "bg-success/10 text-success" : "bg-danger/10 text-danger"
+                                )}>
+                                  {selectedSale.paymentStatus === 'paid' ? 'PAGO' : 'PENDENTE'}
+                                </span>
+                              </div>
+                              <div className="mt-1 flex justify-between items-center">
+                                <span>
+                                  {selectedSale.paymentMethod2}: {formatCurrency(selectedSale.splitAmount2 || 0)}
+                                  {selectedSale.installments2 && selectedSale.installments2 > 1 && ` (${selectedSale.installments2}x)`}
+                                </span>
+                                <span className={cn(
+                                  "px-1.5 py-0.5 rounded-full text-[8px] ml-2",
+                                  selectedSale.paymentStatus2 === 'paid' ? "bg-success/10 text-success" : "bg-danger/10 text-danger"
+                                )}>
+                                  {selectedSale.paymentStatus2 === 'paid' ? 'PAGO' : 'PENDENTE'}
+                                </span>
+                              </div>
+                            </>
+                          ) : (
+                            <div className="flex justify-between items-center">
+                              <span>
+                                {selectedSale.paymentMethod}
+                                {selectedSale.installments && selectedSale.installments > 1 && ` (${selectedSale.installments}x)`}
+                              </span>
+                              <span className={cn(
+                                "px-1.5 py-0.5 rounded-full text-[8px] ml-2",
+                                selectedSale.paymentStatus === 'paid' ? "bg-success/10 text-success" : "bg-danger/10 text-danger"
+                              )}>
+                                {selectedSale.paymentStatus === 'paid' ? 'PAGO' : 'PENDENTE'}
+                              </span>
+                            </div>
+                          )}
+                        </p>
                       </div>
                     </div>
 
@@ -677,6 +738,34 @@ export default function SalesHistory() {
                         <div className="flex justify-between text-xs items-center">
                            <span className="text-slate-400 font-bold uppercase text-[9px]">Operador</span>
                            <span className="text-slate-800 font-black">{selectedSale.userName}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="p-4 bg-slate-50 rounded-3xl border border-slate-100">
+                      <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-2 flex items-center gap-1">
+                        <Receipt className="w-3 h-3" /> Resumo Financeiro
+                      </p>
+                      <div className="space-y-1">
+                        <div className="flex justify-between text-[10px] items-center">
+                           <span className="text-slate-400 font-bold uppercase">Subtotal</span>
+                           <span className="text-slate-800 font-black">{formatCurrency(selectedSale.subtotal)}</span>
+                        </div>
+                        {(selectedSale.discount > 0 || (selectedSale.discount2 && selectedSale.discount2 > 0)) && (
+                          <div className="flex justify-between text-[10px] items-center">
+                             <span className="text-danger font-bold uppercase">Total Desconto</span>
+                             <span className="text-danger font-black">-{formatCurrency((selectedSale.discount || 0) + (selectedSale.discount2 || 0))}</span>
+                          </div>
+                        )}
+                        {(selectedSale.customerFee > 0 || (selectedSale.customerFee2 && selectedSale.customerFee2 > 0)) && (
+                          <div className="flex justify-between text-[10px] items-center">
+                             <span className="text-success font-bold uppercase">Total Juros (Cliente)</span>
+                             <span className="text-success font-black">+{formatCurrency((selectedSale.customerFee || 0) + (selectedSale.customerFee2 || 0))}</span>
+                          </div>
+                        )}
+                        <div className="flex justify-between text-xs items-center mt-1 pt-1 border-t border-slate-200">
+                           <span className="text-slate-900 font-black uppercase">Total Líquido</span>
+                           <span className="text-accent font-black">{formatCurrency(selectedSale.total)}</span>
                         </div>
                       </div>
                     </div>

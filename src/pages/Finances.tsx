@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 import { 
   Wallet, 
   ArrowUpRight, 
-  ArrowDownRight, 
   Plus, 
   History as HistoryIcon,
   Search,
@@ -17,8 +16,10 @@ import {
   TrendingUp,
   Calculator,
   Minus,
+  Trash2,
   X,
-  Lock
+  Lock,
+  CheckCircle2
 } from 'lucide-react';
 import { 
   collection, 
@@ -30,6 +31,7 @@ import {
   Timestamp,
   doc,
   updateDoc,
+  deleteDoc,
   serverTimestamp,
   getDocs,
   limit,
@@ -104,7 +106,7 @@ interface Movement {
   id: string;
   amount: number;
   type: 'in' | 'out';
-  category?: 'venda' | 'sangria' | 'suprimento';
+  category?: 'venda' | 'sangria' | 'suprimento' | 'compra' | 'outros';
   paymentMethod?: string;
   reason: string;
   userId: string;
@@ -117,16 +119,13 @@ export default function Finances() {
   const { profile, verifyPassword } = useAuth();
   const [activeSession, setActiveSession] = useState<CashSession | null>(null);
   const [movements, setMovements] = useState<Movement[]>([]);
+  const [pendingSales, setPendingSales] = useState<any[]>([]);
+  const [pendingPurchases, setPendingPurchases] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState<'current' | 'future'>('current');
   
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [submittingStats, setSubmittingStats] = useState(false);
-
-  // Password Verification State
-  const [showPasswordPrompt, setShowPasswordPrompt] = useState(false);
-  const [passwordInput, setPasswordInput] = useState('');
-  const [verifyingPassword, setVerifyingPassword] = useState(false);
-  const [pendingAction, setPendingAction] = useState<() => void>(() => {});
 
   // Modals
   const [showWithdrawalModal, setShowWithdrawalModal] = useState(false);
@@ -143,7 +142,15 @@ export default function Finances() {
   const [closingNote, setClosingNote] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
+  // Password Verification State
+  const [showPasswordPrompt, setShowPasswordPrompt] = useState(false);
+  const [passwordInput, setPasswordInput] = useState('');
+  const [verifyingPassword, setVerifyingPassword] = useState(false);
+  const [passwordPromptTitle, setPasswordPromptTitle] = useState('Acesso Restrito');
+  const [pendingAction, setPendingAction] = useState<(() => void) | null>(null);
+
   const confirmPassword = async () => {
+    if (!passwordInput) return;
     setVerifyingPassword(true);
     const isValid = await verifyPassword(passwordInput);
     setVerifyingPassword(false);
@@ -151,9 +158,12 @@ export default function Finances() {
     if (isValid) {
       setShowPasswordPrompt(false);
       setPasswordInput('');
-      pendingAction();
+      if (pendingAction) {
+        pendingAction();
+        setPendingAction(null);
+      }
     } else {
-      alert('Senha incorreta');
+      alert('Senha incorreta. Tente novamente.');
     }
   };
 
@@ -162,10 +172,14 @@ export default function Finances() {
     totalSales: 0,
     totalWithdrawals: 0,
     totalSupplies: 0,
+    totalPurchases: 0,
     lucroHoje: 0,
-    dinheiro: 0,
-    pix: 0,
-    cartao: 0
+    dinheiroIn: 0,
+    dinheiroOut: 0,
+    pixIn: 0,
+    pixOut: 0,
+    cartaoIn: 0,
+    cartaoOut: 0
   });
 
   useEffect(() => {
@@ -188,16 +202,20 @@ export default function Finances() {
       setLoading(false);
     });
 
-    return () => unsubSession();
+    return () => {
+      unsubSession();
+    };
   }, []);
 
   useEffect(() => {
     if (!activeSession) return;
 
+    const sessStartStr = (activeSession.openedAt instanceof Timestamp ? activeSession.openedAt.toDate() : getBrasiliaTime()).toISOString();
+    
     const qMovements = query(
       collection(db, 'cash_movements'),
-      orderBy('timestamp', 'desc'),
-      limit(50)
+      where('timestamp', '>=', sessStartStr),
+      orderBy('timestamp', 'desc')
     );
 
     const unsubMovements = onSnapshot(qMovements, (snapshot) => {
@@ -210,9 +228,13 @@ export default function Finances() {
       let salesSum = 0;
       let withSum = 0;
       let supSum = 0;
-      let moneySum = 0;
-      let pixSum = 0;
-      let cardSum = 0;
+      let moneyIn = 0;
+      let moneyOut = 0;
+      let pixIn = 0;
+      let pixOut = 0;
+      let cardIn = 0;
+      let cardOut = 0;
+      let purchaseSum = 0;
 
       docs.forEach(m => {
         if (m.type === 'in') {
@@ -220,11 +242,20 @@ export default function Finances() {
            if (m.category === 'suprimento') supSum += m.amount;
            
            // Por método
-           if (m.paymentMethod === 'dinheiro') moneySum += m.amount;
-           if (m.paymentMethod === 'pix') pixSum += m.amount;
-           if (m.paymentMethod === 'cartão') cardSum += m.amount;
+           if (m.paymentMethod === 'dinheiro') moneyIn += m.amount;
+           if (m.paymentMethod === 'pix') pixIn += m.amount;
+           if (m.paymentMethod === 'cartão') cardIn += m.amount;
+        } else if (m.type === 'out') {
+           if (m.category === 'sangria') withSum += m.amount;
+           if (m.category === 'compra') purchaseSum += m.amount;
+           // If manually added withdrawal, count as withSum if no category
+           if (!m.category) withSum += m.amount;
+
+           // Por método (saídas)
+           if (m.paymentMethod === 'dinheiro') moneyOut += m.amount;
+           if (m.paymentMethod === 'pix') pixOut += m.amount;
+           if (m.paymentMethod === 'cartão') cardOut += m.amount;
         }
-        if (m.type === 'out') withSum += m.amount;
       });
 
       setStats(prev => ({ 
@@ -232,16 +263,33 @@ export default function Finances() {
         totalSales: salesSum, 
         totalWithdrawals: withSum, 
         totalSupplies: supSum,
-        dinheiro: moneySum,
-        pix: pixSum,
-        cartao: cardSum
+        totalPurchases: purchaseSum,
+        dinheiroIn: moneyIn,
+        dinheiroOut: moneyOut,
+        pixIn: pixIn,
+        pixOut: pixOut,
+        cartaoIn: cardIn,
+        cartaoOut: cardOut
       }));
     }, (error) => {
       handleFirestoreError(error, OperationType.LIST, 'cash_movements');
     });
 
+    const unsubPendingSales = onSnapshot(collection(db, 'sales'), (snapshot) => {
+      const pending = snapshot.docs
+        .map(doc => ({ id: doc.id, ...doc.data() }))
+        .filter((s: any) => s.paymentStatus === 'pending' || s.paymentStatus2 === 'pending');
+      setPendingSales(pending);
+    });
+
+    const unsubPendingPurchases = onSnapshot(collection(db, 'purchases'), (snapshot) => {
+      const pending = snapshot.docs
+        .map(doc => ({ id: doc.id, ...doc.data() }))
+        .filter((p: any) => p.paymentStatus === 'pending' || p.paymentStatus2 === 'pending');
+      setPendingPurchases(pending);
+    });
+
     // Fetch Profit for Today (Sales items items: price - costPrice)
-    const sessStartStr = (activeSession.openedAt instanceof Timestamp ? activeSession.openedAt.toDate() : getBrasiliaTime()).toISOString();
     const qSales = query(collection(db, 'sales'), where('timestamp', '>=', sessStartStr), where('status', '==', 'completed'));
     
     const unsubSales = onSnapshot(qSales, (snapshot) => {
@@ -263,6 +311,8 @@ export default function Finances() {
     return () => {
       unsubMovements();
       unsubSales();
+      unsubPendingSales();
+      unsubPendingPurchases();
     };
   }, [activeSession]);
 
@@ -381,7 +431,32 @@ export default function Finances() {
     );
   }
 
-  const saldoAtual = activeSession ? (activeSession.openingBalance + stats.totalSales + stats.totalSupplies - stats.totalWithdrawals) : 0;
+  const saldoAtual = activeSession ? (activeSession.openingBalance + stats.dinheiroIn + stats.totalSupplies - stats.totalWithdrawals - stats.dinheiroOut) : 0;
+  const saldoTotal = activeSession ? (activeSession.openingBalance + stats.totalSales + stats.totalSupplies - stats.totalWithdrawals - stats.totalPurchases) : 0;
+
+  const handleDeleteMovement = async (m: Movement) => {
+     if (!profile || profile.role !== 'admin') {
+       alert('Apenas administradores podem excluir movimentações.');
+       return;
+     }
+
+     if (!confirm(`Deseja realmente excluir esta movimentação de ${formatCurrency(m.amount)} (${m.reason})?`)) return;
+
+     try {
+       setSubmitting(true);
+       await deleteDoc(doc(db, 'cash_movements', m.id));
+       
+       // Handle side effects (e.g. if it was a purchase, maybe update purchase status)
+       // For now, just delete the movement as requested to "not interfere"
+       
+       alert('Movimentação excluída com sucesso!');
+     } catch (err) {
+       console.error(err);
+       alert('Erro ao excluir movimentação.');
+     } finally {
+       setSubmitting(false);
+     }
+  };
 
   return (
     <div className="max-w-xl mx-auto space-y-6 pb-20 px-2 lg:px-0">
@@ -390,259 +465,321 @@ export default function Finances() {
           <DollarSign className="w-6 h-6" />
         </div>
         <div>
-          <h1 className="text-2xl font-black text-primary tracking-tight leading-none">Financeiro</h1>
+          <h1 className="text-2xl font-black text-primary tracking-tight leading-none">Caixa</h1>
           <p className="text-[10px] text-slate-400 uppercase font-bold tracking-widest mt-1">Gestão de Caixa e Fluxo</p>
         </div>
       </header>
 
-      <div className="space-y-4">
-        {activeSession && (
-            <div className="mt-1">
-              <p className="text-slate-400 text-xs font-bold">Aberto desde</p>
-              <p className="text-slate-500 text-xs font-black">
-                {format(activeSession.openedAt instanceof Timestamp ? activeSession.openedAt.toDate() : new Date(activeSession.openedAt), "dd/MM/yyyy, HH:mm:ss", { locale: ptBR })}
-              </p>
-            </div>
-          )}
-        
-        {activeSession && (
-          <div className="grid grid-cols-2 gap-4">
-             <button 
-              onClick={() => setShowSupplyModal(true)}
-              className="flex items-center justify-center gap-2 py-3.5 bg-white border border-gray-200 rounded-xl text-xs font-black text-slate-700 hover:bg-slate-50 transition-all shadow-sm"
-             >
-               <Plus className="w-4 h-4" />
-               Suprimento
-             </button>
-             <button 
-              onClick={() => setShowWithdrawalModal(true)}
-              className="flex items-center justify-center gap-2 py-3.5 bg-white border border-gray-200 rounded-xl text-xs font-black text-slate-700 hover:bg-slate-50 transition-all shadow-sm"
-             >
-               <Minus className="w-4 h-4" />
-               Sangria
-             </button>
-          </div>
-        )}
+      <div className="space-y-6">
+        <div className="flex items-center p-1 bg-slate-100 rounded-2xl mx-1">
+          <button 
+            onClick={() => setActiveTab('current')}
+            className={cn(
+              "flex-1 py-3 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all",
+              activeTab === 'current' ? "bg-white text-primary shadow-sm" : "text-slate-500"
+            )}
+          >
+            Caixa Atual
+          </button>
+          <button 
+            onClick={() => setActiveTab('future')}
+            className={cn(
+              "flex-1 py-3 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all",
+              activeTab === 'future' ? "bg-white text-primary shadow-sm" : "text-slate-500"
+            )}
+          >
+            Movimentações Futuras
+          </button>
+        </div>
 
-        {/* Emergency reset button for admins to clear session sales */}
-        {activeSession && profile?.role === 'admin' && (
-          <div className="mt-4 p-4 bg-red-50/50 border border-red-100 rounded-2xl flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="w-8 h-8 bg-red-100 rounded-lg flex items-center justify-center text-red-600">
-                <AlertCircle className="w-4 h-4" />
+        {activeTab === 'current' ? (
+          <div className="space-y-4">
+            {activeSession && (
+              <div className="mt-1 px-2">
+                <p className="text-slate-400 text-xs font-bold">Aberto desde</p>
+                <p className="text-slate-500 text-xs font-black">
+                  {format(activeSession.openedAt instanceof Timestamp ? activeSession.openedAt.toDate() : new Date(activeSession.openedAt), "dd/MM/yyyy, HH:mm:ss", { locale: ptBR })}
+                </p>
               </div>
-              <div className="flex-1">
-                <p className="text-[10px] font-black text-red-400 uppercase tracking-widest">Ajuste de Fluxo</p>
-                <h4 className="text-[11px] font-black text-red-900">Zerar Registro de Vendas</h4>
+            )}
+            
+            {activeSession && (
+              <div className="grid grid-cols-2 gap-4 px-2">
+                 <button 
+                  onClick={() => setShowSupplyModal(true)}
+                  className="flex items-center justify-center gap-2 py-3.5 bg-white border border-gray-200 rounded-xl text-xs font-black text-slate-700 hover:bg-slate-50 transition-all shadow-sm"
+                 >
+                   <Plus className="w-4 h-4" />
+                   Suprimento
+                 </button>
+                 <button 
+                  onClick={() => setShowWithdrawalModal(true)}
+                  className="flex items-center justify-center gap-2 py-3.5 bg-white border border-gray-200 rounded-xl text-xs font-black text-slate-700 hover:bg-slate-50 transition-all shadow-sm"
+                 >
+                   <Minus className="w-4 h-4" />
+                   Sangria
+                 </button>
+              </div>
+            )}
+
+            {/* Emergency reset button for admins */}
+            {activeSession && profile?.role === 'admin' && (
+              <div className="px-2">
+                <div className="p-4 bg-red-50/50 border border-red-100 rounded-2xl flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 bg-red-100 rounded-lg flex items-center justify-center text-red-600">
+                      <AlertCircle className="w-4 h-4" />
+                    </div>
+                    <div className="flex-1">
+                      <p className="text-[10px] font-black text-red-400 uppercase tracking-widest">Ajuste de Fluxo</p>
+                      <h4 className="text-[11px] font-black text-red-900">Zerar Registro de Vendas</h4>
+                    </div>
+                  </div>
+                  
+                  <div className="flex items-center gap-2">
+                    <AnimatePresence mode="wait">
+                      {!showResetConfirm ? (
+                        <motion.button 
+                          key="trigger"
+                          initial={{ opacity: 0, x: 20 }}
+                          animate={{ opacity: 1, x: 0 }}
+                          exit={{ opacity: 0, x: -20 }}
+                          onClick={() => setShowResetConfirm(true)}
+                          className="px-4 py-2 bg-red-600 text-white text-[10px] font-black rounded-lg hover:bg-red-700 transition-colors uppercase"
+                        >
+                          Zerar
+                        </motion.button>
+                      ) : (
+                        <motion.div 
+                          key="confirm"
+                          initial={{ opacity: 0, scale: 0.9 }}
+                          animate={{ opacity: 1, scale: 1 }}
+                          exit={{ opacity: 0, scale: 0.9 }}
+                          className="flex items-center gap-2"
+                        >
+                          <button onClick={() => setShowResetConfirm(false)} className="px-3 py-2 bg-slate-200 text-slate-600 text-[10px] font-black rounded-lg uppercase">Não</button>
+                          <button 
+                            disabled={submittingStats}
+                            onClick={() => {
+                              const action = async () => {
+                                try {
+                                  setSubmittingStats(true);
+                                  const sessStartIso = (activeSession.openedAt instanceof Timestamp ? activeSession.openedAt.toDate() : getBrasiliaTime()).toISOString();
+                                  const q = query(
+                                    collection(db, 'cash_movements'), 
+                                    where('timestamp', '>=', sessStartIso),
+                                    where('category', '==', 'venda')
+                                  );
+                                  const snap = await getDocs(q);
+                                  const batch = writeBatch(db);
+                                  snap.docs.forEach(d => batch.delete(d.ref));
+                                  await batch.commit();
+                                  alert('As estatísticas de venda da sessão foram resetadas!');
+                                  setShowResetConfirm(false);
+                                } catch (err) {
+                                  console.error(err);
+                                  alert('Erro ao processar limpeza.');
+                                } finally {
+                                  setSubmittingStats(false);
+                                }
+                              };
+                              setPendingAction(() => action);
+                              setPasswordPromptTitle('Confirmar Ajuste de Fluxo');
+                              setShowPasswordPrompt(true);
+                            }}
+                            className="px-4 py-2 bg-red-600 text-white text-[10px] font-black rounded-lg hover:bg-red-700 transition-colors uppercase flex items-center gap-2"
+                          >
+                            {submittingStats && <Loader2 className="w-3 h-3 animate-spin" />}
+                            Sim, Zerar
+                          </button>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {!activeSession ? (
+              <motion.div 
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                className="bg-white p-8 rounded-[20px] border border-gray-100 shadow-xl flex flex-col items-center text-center space-y-6 mx-1"
+              >
+                <div className="w-20 h-20 bg-slate-50 rounded-[15px] flex items-center justify-center text-slate-300">
+                  <Wallet className="w-10 h-10" />
+                </div>
+                <div>
+                  <h2 className="text-xl font-black text-primary uppercase">Caixa Fechado</h2>
+                  <p className="text-slate-400 text-xs font-bold leading-relaxed px-4">O caixa ainda não foi aberto. Informe o saldo inicial para começar.</p>
+                </div>
+                
+                <form onSubmit={handleOpenCash} className="w-full space-y-4">
+                  <div className="space-y-1 text-left">
+                    <label className="text-[10px] font-black text-slate-400 uppercase ml-2">Saldo Inicial (R$)</label>
+                    <input 
+                      type="number"
+                      step="0.01"
+                      required
+                      value={openingAmount}
+                      onChange={(e) => setOpeningAmount(e.target.value)}
+                      placeholder="Ex: 500,00"
+                      className="w-full h-14 bg-slate-50 border-2 border-transparent focus:border-accent rounded-xl px-6 font-black text-slate-800 transition-all outline-none"
+                    />
+                  </div>
+                  <button 
+                    type="submit"
+                    disabled={submitting}
+                    className="w-full h-14 bg-accent text-white font-black rounded-xl shadow-xl shadow-accent/25 hover:translate-y-[-2px] active:translate-y-0 transition-all flex items-center justify-center gap-2 disabled:opacity-50 uppercase text-xs"
+                  >
+                    {submitting ? <Loader2 className="w-5 h-5 animate-spin" /> : <DollarSign className="w-5 h-5" />}
+                    Abrir Caixa
+                  </button>
+                </form>
+              </motion.div>
+            ) : (
+              <div className="space-y-6 px-1">
+                <div className="space-y-4">
+                  <StatBox label="Saldo em Dinheiro (Físico)" value={saldoAtual} icon={DollarSign} iconColor="text-white" active />
+                  <div className="grid grid-cols-2 gap-4">
+                    <StatBox label="Vendas do Dia" value={stats.totalSales} icon={TrendingUp} iconColor="text-gray-400" />
+                    <StatBox label="Lucro de Hoje" value={stats.lucroHoje} icon={TrendingUp} iconColor="text-gray-400" />
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <StatBox label="Saldo de Abertura" value={activeSession.openingBalance} icon={Calculator} iconColor="text-gray-400" />
+                    <StatBox label="Liquidez Total" value={saldoTotal} icon={Wallet} iconColor="text-teal-600" />
+                  </div>
+                </div>
+
+                <div className="space-y-3">
+                  <PaymentMethodRow label="Dinheiro" value={stats.dinheiroIn - stats.dinheiroOut} icon={DollarSign} />
+                  <PaymentMethodRow label="PIX" value={stats.pixIn - stats.pixOut} icon={Smartphone} />
+                  <PaymentMethodRow label="Cartão" value={stats.cartaoIn - stats.cartaoOut} icon={CreditCard} />
+                </div>
+
+                <div className="bg-white border border-gray-100 rounded-2xl overflow-hidden shadow-sm">
+                  <div className="p-5 border-b border-gray-50 bg-gray-50/50">
+                    <h3 className="text-sm font-black text-slate-800">Transações Recentes</h3>
+                  </div>
+                  <div className="divide-y divide-gray-50 max-h-[400px] overflow-y-auto">
+                    {movements.map((m) => {
+                      const date = m.timestamp instanceof Timestamp ? m.timestamp.toDate() : new Date(m.timestamp);
+                      return (
+                        <div key={m.id} className="p-4 flex items-center justify-between hover:bg-slate-50 transition-colors group">
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <p className="text-sm font-bold text-slate-800">{m.category === 'venda' ? `Venda #${m.saleId?.slice(-4)}` : m.reason}</p>
+                              {m.paymentMethod && (
+                                <span className="text-[8px] font-black px-1.5 py-0.5 bg-slate-100 text-slate-400 rounded uppercase">
+                                  {m.paymentMethod}
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-0.5">
+                              {m.category || (m.type === 'in' ? 'entrada' : 'saída')} · {format(date, "dd/MM/yyyy, HH:mm:ss")}
+                            </p>
+                          </div>
+                          <div className="flex items-center gap-4">
+                            <p className={cn("text-sm font-black", m.type === 'in' ? "text-success" : "text-danger")}>
+                              {m.type === 'in' ? '+' : '-'} {formatCurrency(m.amount)}
+                            </p>
+                            {profile?.role === 'admin' && (
+                              <button 
+                                onClick={() => handleDeleteMovement(m)}
+                                className="p-2 text-slate-300 hover:text-danger opacity-0 group-hover:opacity-100 transition-all"
+                                title="Excluir movimentação"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                    {movements.length === 0 && (
+                      <div className="p-12 text-center text-slate-300">
+                        <HistoryIcon className="w-10 h-10 mx-auto mb-2 opacity-20" />
+                        <p className="text-xs font-black uppercase tracking-widest">Sem movimentos</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <button 
+                  onClick={handleCloseCash}
+                  disabled={submitting}
+                  className="w-full py-4 bg-danger/5 hover:bg-danger/10 text-danger font-black rounded-2xl text-[10px] uppercase tracking-widest transition-all border border-danger/10 flex items-center justify-center gap-2 disabled:opacity-50"
+                >
+                  {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+                  Encerrar Expediente (Fechar Caixa)
+                </button>
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="space-y-6 px-1">
+            <div className="grid grid-cols-2 gap-4">
+              <StatBox label="A Receber (Vendas)" value={pendingSales.reduce((acc, s) => acc + (s.paymentStatus === 'pending' ? (s.splitAmount1 || s.total) : 0) + (s.paymentStatus2 === 'pending' ? (s.splitAmount2 || 0) : 0), 0)} icon={ArrowUpRight} iconColor="text-teal-500" />
+              <StatBox label="A Pagar (Compras)" value={pendingPurchases.reduce((acc, p) => acc + (p.paymentStatus === 'pending' ? (p.splitAmount1 || p.total) : 0) + (p.paymentStatus2 === 'pending' ? (p.splitAmount2 || 0) : 0), 0)} icon={Minus} iconColor="text-rose-500" />
+            </div>
+
+            <div className="bg-white border border-gray-100 rounded-2xl overflow-hidden shadow-sm">
+              <div className="p-5 border-b border-gray-50 bg-gray-50/50 flex justify-between items-center">
+                <h3 className="text-sm font-black text-slate-800 uppercase tracking-tighter">Entradas Futuras</h3>
+                <span className="text-[10px] font-black text-teal-600 bg-teal-50 px-2 py-1 rounded-lg uppercase tracking-widest">Vendas</span>
+              </div>
+              <div className="divide-y divide-gray-50 max-h-[300px] overflow-y-auto">
+                {pendingSales.map((s) => (
+                  <div key={s.id} className="p-4 flex items-center justify-between hover:bg-slate-50 transition-colors">
+                    <div>
+                      <p className="text-sm font-bold text-slate-800">{s.customerName || 'Cliente Direto'}</p>
+                      <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-0.5">
+                        VENDA #{s.id.slice(-4)} · {format(new Date(s.timestamp), "dd/MM")}
+                      </p>
+                    </div>
+                    <p className="text-sm font-black text-teal-600">
+                      + {formatCurrency((s.paymentStatus === 'pending' ? (s.splitAmount1 || s.total) : 0) + (s.paymentStatus2 === 'pending' ? (s.splitAmount2 || 0) : 0))}
+                    </p>
+                  </div>
+                ))}
+                {pendingSales.length === 0 && (
+                  <div className="p-8 text-center text-slate-300">
+                    <p className="text-[10px] font-black uppercase tracking-widest">Sem vendas pendentes</p>
+                  </div>
+                )}
               </div>
             </div>
-            
-            <div className="flex items-center gap-2">
-              <AnimatePresence mode="wait">
-                {!showResetConfirm ? (
-                  <motion.button 
-                    key="trigger"
-                    initial={{ opacity: 0, x: 20 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    exit={{ opacity: 0, x: -20 }}
-                    onClick={() => setShowResetConfirm(true)}
-                    className="px-4 py-2 bg-red-600 text-white text-[10px] font-black rounded-lg hover:bg-red-700 transition-colors uppercase"
-                  >
-                    Zerar
-                  </motion.button>
-                ) : (
-                  <motion.div 
-                    key="confirm"
-                    initial={{ opacity: 0, scale: 0.9 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    exit={{ opacity: 0, scale: 0.9 }}
-                    className="flex items-center gap-2"
-                  >
-                    <button 
-                      onClick={() => setShowResetConfirm(false)}
-                      className="px-3 py-2 bg-slate-200 text-slate-600 text-[10px] font-black rounded-lg uppercase"
-                    >
-                      Não
-                    </button>
-                    <button 
-                      disabled={submittingStats}
-                      onClick={() => {
-                        const action = async () => {
-                          try {
-                            setSubmittingStats(true);
-                            const sessStartIso = (activeSession.openedAt instanceof Timestamp ? activeSession.openedAt.toDate() : getBrasiliaTime()).toISOString();
-                            const q = query(
-                              collection(db, 'cash_movements'), 
-                              where('timestamp', '>=', sessStartIso),
-                              where('category', '==', 'venda')
-                            );
-                            const snap = await getDocs(q);
-                            const batch = writeBatch(db);
-                            snap.docs.forEach(d => batch.delete(d.ref));
-                            await batch.commit();
-                            
-                            alert('As estatísticas de venda da sessão foram resetadas!');
-                            setShowResetConfirm(false);
-                          } catch (err) {
-                            console.error(err);
-                            alert('Erro ao processar limpeza.');
-                          } finally {
-                            setSubmittingStats(false);
-                          }
-                        };
-                        setPendingAction(() => action);
-                        setShowPasswordPrompt(true);
-                      }}
-                      className="px-4 py-2 bg-red-600 text-white text-[10px] font-black rounded-lg hover:bg-red-700 transition-colors uppercase flex items-center gap-2"
-                    >
-                      {submittingStats && <Loader2 className="w-3 h-3 animate-spin" />}
-                      Sim, Zerar
-                    </button>
-                  </motion.div>
+
+            <div className="bg-white border border-gray-100 rounded-2xl overflow-hidden shadow-sm">
+              <div className="p-5 border-b border-gray-50 bg-gray-50/50 flex justify-between items-center">
+                <h3 className="text-sm font-black text-slate-800 uppercase tracking-tighter">Saídas Futuras</h3>
+                <span className="text-[10px] font-black text-rose-600 bg-rose-50 px-2 py-1 rounded-lg uppercase tracking-widest">Compras</span>
+              </div>
+              <div className="divide-y divide-gray-50 max-h-[300px] overflow-y-auto">
+                {pendingPurchases.map((p) => (
+                  <div key={p.id} className="p-4 flex items-center justify-between hover:bg-slate-50 transition-colors">
+                    <div>
+                      <p className="text-sm font-bold text-slate-800">{p.supplierName || 'Fornecedor'}</p>
+                      <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-0.5">
+                        COMPRA #{p.id.slice(-4)} · {format(new Date(p.timestamp), "dd/MM")}
+                      </p>
+                    </div>
+                    <p className="text-sm font-black text-rose-600">
+                      - {formatCurrency((p.paymentStatus === 'pending' ? (p.splitAmount1 || p.total) : 0) + (p.paymentStatus2 === 'pending' ? (p.splitAmount2 || 0) : 0))}
+                    </p>
+                  </div>
+                ))}
+                {pendingPurchases.length === 0 && (
+                  <div className="p-8 text-center text-slate-300">
+                    <p className="text-[10px] font-black uppercase tracking-widest">Sem compras pendentes</p>
+                  </div>
                 )}
-              </AnimatePresence>
+              </div>
             </div>
           </div>
         )}
       </div>
 
-      {!activeSession ? (
-        <motion.div 
-          initial={{ opacity: 0, scale: 0.95 }}
-          animate={{ opacity: 1, scale: 1 }}
-          className="bg-white p-8 rounded-[20px] border border-gray-100 shadow-xl flex flex-col items-center text-center space-y-6"
-        >
-          <div className="w-20 h-20 bg-slate-50 rounded-[15px] flex items-center justify-center text-slate-300">
-            <Wallet className="w-10 h-10" />
-          </div>
-          <div>
-            <h2 className="text-xl font-black text-primary uppercase">Caixa Fechado</h2>
-            <p className="text-slate-400 text-xs font-bold leading-relaxed px-4">O caixa ainda não foi aberto. Informe o saldo inicial para começar.</p>
-          </div>
-          
-          <form onSubmit={handleOpenCash} className="w-full space-y-4">
-            <div className="space-y-1 text-left">
-              <label className="text-[10px] font-black text-slate-400 uppercase ml-2">Saldo Inicial (R$)</label>
-              <input 
-                type="number"
-                step="0.01"
-                required
-                value={openingAmount}
-                onChange={(e) => setOpeningAmount(e.target.value)}
-                placeholder="Ex: 500,00"
-                className="w-full h-14 bg-slate-50 border-2 border-transparent focus:border-accent rounded-xl px-6 font-black text-slate-800 transition-all outline-none"
-              />
-            </div>
-            <button 
-              type="submit"
-              disabled={submitting}
-              className="w-full h-14 bg-accent text-white font-black rounded-xl shadow-xl shadow-accent/25 hover:translate-y-[-2px] active:translate-y-0 transition-all flex items-center justify-center gap-2 disabled:opacity-50 uppercase text-xs"
-            >
-              {submitting ? <Loader2 className="w-5 h-5 animate-spin" /> : <DollarSign className="w-5 h-5" />}
-              Abrir Caixa
-            </button>
-          </form>
-        </motion.div>
-      ) : (
-        <div className="space-y-6">
-          {/* Top 4 Stats Grid */}
-          <div className="space-y-4">
-             <StatBox 
-              label="Saldo Atual"
-              value={saldoAtual}
-              icon={DollarSign}
-              iconColor="text-white"
-              active
-             />
-             <div className="grid grid-cols-2 gap-4">
-                <StatBox 
-                 label="Total de Vendas"
-                 value={stats.totalSales}
-                 icon={TrendingUp}
-                 iconColor="text-gray-400"
-                />
-                <StatBox 
-                 label="Lucro de Hoje"
-                 value={stats.lucroHoje}
-                 icon={TrendingUp}
-                 iconColor="text-gray-400"
-                />
-             </div>
-             <StatBox 
-              label="Saldo de Abertura"
-              value={activeSession.openingBalance}
-              icon={Calculator}
-              iconColor="text-gray-400"
-             />
-          </div>
-
-          {/* Payment Methods */}
-          <div className="space-y-3">
-             <PaymentMethodRow 
-               label="Dinheiro"
-               value={stats.dinheiro}
-               icon={DollarSign}
-             />
-             <PaymentMethodRow 
-               label="PIX"
-               value={stats.pix}
-               icon={Smartphone}
-             />
-             <PaymentMethodRow 
-               label="Cartão"
-               value={stats.cartao}
-               icon={CreditCard}
-             />
-          </div>
-
-          {/* Recent Transactions */}
-          <div className="bg-white border border-gray-100 rounded-2xl overflow-hidden shadow-sm">
-            <div className="p-5 border-b border-gray-50 bg-gray-50/50">
-               <h3 className="text-sm font-black text-slate-800">Transações Recentes</h3>
-            </div>
-            <div className="divide-y divide-gray-50 max-h-[400px] overflow-y-auto">
-               {movements.map((m) => {
-                 const date = m.timestamp instanceof Timestamp ? m.timestamp.toDate() : new Date(m.timestamp);
-                 return (
-                   <div key={m.id} className="p-4 flex items-center justify-between hover:bg-slate-50 transition-colors">
-                      <div>
-                         <p className="text-sm font-bold text-slate-800">
-                           {m.category === 'venda' ? `Venda #${m.saleId?.slice(-4)}` : m.reason}
-                         </p>
-                         <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-0.5">
-                           {m.category || (m.type === 'in' ? 'entrada' : 'saída')} · {format(date, "dd/MM/yyyy, HH:mm:ss")}
-                         </p>
-                      </div>
-                      <p className={cn(
-                        "text-sm font-black",
-                        m.type === 'in' ? "text-success" : "text-danger"
-                      )}>
-                        {m.type === 'in' ? '+' : '-'} {formatCurrency(m.amount)}
-                      </p>
-                   </div>
-                 );
-               })}
-               {movements.length === 0 && (
-                 <div className="p-12 text-center text-slate-300">
-                    <HistoryIcon className="w-10 h-10 mx-auto mb-2 opacity-20" />
-                    <p className="text-xs font-black uppercase tracking-widest">Sem movimentos</p>
-                 </div>
-               )}
-            </div>
-          </div>
-
-          <button 
-            onClick={handleCloseCash}
-            disabled={submitting}
-            className="w-full py-4 bg-danger/5 hover:bg-danger/10 text-danger font-black rounded-2xl text-[10px] uppercase tracking-widest transition-all border border-danger/10 flex items-center justify-center gap-2 disabled:opacity-50"
-          >
-            {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
-            Encerrar Expediente (Fechar Caixa)
-          </button>
-        </div>
-      )}
-
-      {/* Modals */}
       <AnimatePresence>
         {showCloseConfirm && (
           <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
@@ -811,8 +948,8 @@ export default function Finances() {
               <div className="w-16 h-16 bg-accent/10 rounded-2xl flex items-center justify-center text-accent mx-auto mb-6">
                 <Lock className="w-8 h-8" />
               </div>
-              <h2 className="text-lg font-black text-slate-800 uppercase tracking-tighter mb-2">Acesso Restrito</h2>
-              <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-6">Confirme sua senha de Admin para continuar</p>
+              <h2 className="text-lg font-black text-slate-800 uppercase tracking-tighter mb-2">{passwordPromptTitle}</h2>
+              <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-6">Confirme sua senha de Admin para prosseguir</p>
               
               <div className="space-y-4">
                 <input 
@@ -892,23 +1029,4 @@ function PaymentMethodRow({ label, value, icon: Icon }: any) {
   );
 }
 
-function CheckCircle2(props: any) {
-  return (
-    <svg
-      {...props}
-      xmlns="http://www.w3.org/2000/svg"
-      width="24"
-      height="24"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10z" />
-      <path d="m9 12 2 2 4-4" />
-    </svg>
-  );
-}
 

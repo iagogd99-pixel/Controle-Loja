@@ -82,16 +82,16 @@ export default function Purchases() {
   useEffect(() => {
     const q = query(
       collection(db, 'purchases'), 
-      where('paymentStatus', '==', 'paid'),
       orderBy('timestamp', 'desc')
     );
     const unsub = onSnapshot(q, (snapshot) => {
-      const docs = snapshot.docs.map(doc => ({
+      const allPurchases = snapshot.docs.map(doc => ({
         id: doc.id,
         ...doc.data(),
         itemsCount: doc.data().items?.length || 0
       })) as Purchase[];
-      setPurchases(docs);
+      const paidPurchases = allPurchases.filter(p => p.paymentStatus === 'paid' || p.paymentStatus2 === 'paid');
+      setPurchases(paidPurchases);
       setLoading(false);
     });
     return () => unsub();
@@ -244,13 +244,26 @@ export default function Purchases() {
                       <div className="text-left">
                         <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">PAGTO</p>
                         <p className="text-[9px] font-black text-slate-600 uppercase tracking-widest truncate">
-                          {(purchase as any).paymentMethod || 'Dinheiro'}
-                          {(purchase as any).installments > 1 ? ` (${(purchase as any).installments}x)` : ''}
+                          {purchase.isSplitPayment ? (
+                            <>
+                              {purchase.paymentStatus === 'paid' && purchase.paymentMethod}
+                              {purchase.paymentStatus === 'paid' && purchase.paymentStatus2 === 'paid' && ' + '}
+                              {purchase.paymentStatus2 === 'paid' && purchase.paymentMethod2}
+                            </>
+                          ) : (
+                            purchase.paymentMethod || 'Dinheiro'
+                          )}
+                          {purchase.installments > 1 ? ` (${purchase.installments}x)` : ''}
                         </p>
                       </div>
                       <div className="text-left lg:text-right">
-                        <p className="text-[9px] font-black text-accent uppercase tracking-widest mb-1 leading-none">TOTAL PAGO</p>
-                        <p className="text-base font-black text-primary leading-none mt-1">{formatCurrency(purchase.total)}</p>
+                        <p className="text-[9px] font-black text-accent uppercase tracking-widest mb-1 leading-none">VALOR PAGO</p>
+                        <p className="text-base font-black text-primary leading-none mt-1">
+                          {formatCurrency(
+                            (purchase.paymentStatus === 'paid' ? (purchase.splitAmount1 || purchase.total) : 0) + 
+                            (purchase.paymentStatus2 === 'paid' ? (purchase.splitAmount2 || 0) : 0)
+                          )}
+                        </p>
                       </div>
                       <div className="flex justify-end gap-2">
                          <button 

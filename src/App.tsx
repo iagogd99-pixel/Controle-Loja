@@ -20,6 +20,7 @@ const SalesHistory = React.lazy(() => import('@/src/pages/SalesHistory'));
 const SalesPending = React.lazy(() => import('@/src/pages/SalesPending'));
 const PurchasesPending = React.lazy(() => import('@/src/pages/PurchasesPending'));
 const Finances = React.lazy(() => import('@/src/pages/Finances'));
+const Expenses = React.lazy(() => import('@/src/pages/Expenses'));
 const Reports = React.lazy(() => import('@/src/pages/Reports'));
 const Clients = React.lazy(() => import('@/src/pages/Clients'));
 const Suppliers = React.lazy(() => import('@/src/pages/Suppliers'));
@@ -93,6 +94,12 @@ export default function App() {
             <Route path="/financas" element={
               <ProtectedRoute>
                 <Layout><Finances /></Layout>
+              </ProtectedRoute>
+            } />
+
+            <Route path="/despesas" element={
+              <ProtectedRoute>
+                <Layout><Expenses /></Layout>
               </ProtectedRoute>
             } />
 

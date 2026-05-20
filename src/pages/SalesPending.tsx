@@ -57,12 +57,13 @@ export default function SalesPending() {
   useEffect(() => {
     const q = query(
       collection(db, 'sales'), 
-      where('paymentStatus', '==', 'pending'),
       orderBy('timestamp', 'desc')
     );
     
     const unsubscribe = onSnapshot(q, (snapshot) => {
-      setSales(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Sale)));
+      const allSales = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Sale));
+      const pendingSales = allSales.filter(s => s.paymentStatus === 'pending' || s.paymentStatus2 === 'pending');
+      setSales(pendingSales);
       setLoading(false);
     }, (error) => {
       console.error("Error fetching pending sales:", error);
@@ -265,8 +266,10 @@ export default function SalesPending() {
       matchesDate = matchesDate && saleDate <= end;
     }
 
-    const matchesMinVal = !filters.minValue || s.total >= Number(filters.minValue);
-    const matchesMaxVal = !filters.maxValue || s.total <= Number(filters.maxValue);
+    const pendingAmountTotal = (s.paymentStatus === 'pending' ? (s.splitAmount1 || s.total) : 0) + (s.paymentStatus2 === 'pending' ? (s.splitAmount2 || 0) : 0);
+
+    const matchesMinVal = !filters.minValue || pendingAmountTotal >= Number(filters.minValue);
+    const matchesMaxVal = !filters.maxValue || pendingAmountTotal <= Number(filters.maxValue);
     
     const matchesProduct = !filters.productName || s.items.some(item => 
       item.name.toLowerCase().includes(filters.productName.toLowerCase())
@@ -314,7 +317,10 @@ export default function SalesPending() {
 
           <div className="bg-danger/10 px-4 py-2 rounded-xl border border-danger/20 flex items-center gap-2">
              <AlertCircle className="w-4 h-4 text-danger" />
-             <p className="text-[10px] font-black text-danger uppercase">Total Pendente: {formatCurrency(sales.reduce((acc, s) => acc + s.total, 0))}</p>
+             <p className="text-[10px] font-black text-danger uppercase">Total Pendente: {formatCurrency(sales.reduce((acc, s) => {
+               const amt = (s.paymentStatus === 'pending' ? (s.splitAmount1 || s.total) : 0) + (s.paymentStatus2 === 'pending' ? (s.splitAmount2 || 0) : 0);
+               return acc + amt;
+             }, 0))}</p>
           </div>
         </div>
       </div>
@@ -439,8 +445,21 @@ export default function SalesPending() {
                 <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{formatDate(sale.timestamp)}</p>
                 <h3 className="text-sm font-black text-slate-800 line-clamp-1">{sale.customerName || 'Cliente Direto'}</h3>
                 <div className="pt-2 border-t border-slate-50 mt-2 flex justify-between items-center">
-                  <span className="text-lg font-black text-danger">{formatCurrency(sale.total)}</span>
-                  <span className="text-[8px] font-black text-slate-300 uppercase tracking-widest">{sale.paymentMethod}</span>
+                  <span className="text-lg font-black text-danger">
+                    {formatCurrency(
+                      (sale.paymentStatus === 'pending' ? (sale.splitAmount1 || sale.total) : 0) + 
+                      (sale.paymentStatus2 === 'pending' ? (sale.splitAmount2 || 0) : 0)
+                    )}
+                  </span>
+                  <span className="text-[8px] font-black text-slate-300 uppercase tracking-widest">
+                    {sale.isSplitPayment ? (
+                      <>
+                        {sale.paymentStatus === 'pending' && sale.paymentMethod}
+                        {sale.paymentStatus === 'pending' && sale.paymentStatus2 === 'pending' && ' + '}
+                        {sale.paymentStatus2 === 'pending' && sale.paymentMethod2}
+                      </>
+                    ) : sale.paymentMethod}
+                  </span>
                 </div>
               </div>
 
@@ -531,7 +550,44 @@ export default function SalesPending() {
                     <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1 flex items-center gap-1">
                       <CreditCard className="w-3 h-3" /> Método Pref.
                     </p>
-                    <p className="text-xs font-black text-slate-800 uppercase">{selectedSale.paymentMethod}</p>
+                    <div className="text-[10px] font-black text-slate-800 uppercase leading-tight">
+                      {selectedSale.isSplitPayment ? (
+                        <>
+                          <div className="flex justify-between items-center">
+                            <span>
+                              {selectedSale.paymentMethod}: {formatCurrency(selectedSale.splitAmount1 || 0)}
+                            </span>
+                            <span className={cn(
+                              "px-1.5 py-0.5 rounded-full text-[8px] ml-2",
+                              selectedSale.paymentStatus === 'paid' ? "bg-success/10 text-success" : "bg-danger/10 text-danger"
+                            )}>
+                              {selectedSale.paymentStatus === 'paid' ? 'PAGO' : 'PENDENTE'}
+                            </span>
+                          </div>
+                          <div className="mt-1 flex justify-between items-center">
+                            <span>
+                              {selectedSale.paymentMethod2}: {formatCurrency(selectedSale.splitAmount2 || 0)}
+                            </span>
+                            <span className={cn(
+                              "px-1.5 py-0.5 rounded-full text-[8px] ml-2",
+                              selectedSale.paymentStatus2 === 'paid' ? "bg-success/10 text-success" : "bg-danger/10 text-danger"
+                            )}>
+                              {selectedSale.paymentStatus2 === 'paid' ? 'PAGO' : 'PENDENTE'}
+                            </span>
+                          </div>
+                        </>
+                      ) : (
+                        <div className="flex justify-between items-center">
+                          <span>{selectedSale.paymentMethod}</span>
+                          <span className={cn(
+                            "px-1.5 py-0.5 rounded-full text-[8px] ml-2",
+                            selectedSale.paymentStatus === 'paid' ? "bg-success/10 text-success" : "bg-danger/10 text-danger"
+                          )}>
+                            {selectedSale.paymentStatus === 'paid' ? 'PAGO' : 'PENDENTE'}
+                          </span>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
 
