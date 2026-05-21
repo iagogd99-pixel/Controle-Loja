@@ -28,6 +28,7 @@ import {
   CheckCircle2,
   Loader2,
   FileText,
+  Minus,
   ShoppingBag,
   User,
   Clock
@@ -264,10 +265,15 @@ export default function Expenses() {
 
   return (
     <div className="space-y-8 pb-20">
-      <header className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-3xl font-black text-primary uppercase tracking-tighter">Despesas</h1>
-          <p className="text-slate-400 font-bold text-sm uppercase tracking-widest mt-1">Gestão de Gastos e Compras</p>
+      <header className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-2 px-2">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 bg-primary/5 rounded-xl flex items-center justify-center text-primary shrink-0">
+            <Minus className="w-6 h-6" />
+          </div>
+          <div>
+            <h1 className="text-2xl font-black text-primary tracking-tight leading-none">Despesas</h1>
+            <p className="text-[10px] text-slate-400 uppercase font-bold tracking-widest mt-1">Gestão de Gastos e Compras</p>
+          </div>
         </div>
         <button 
           onClick={() => navigate('/despesas/nova')}

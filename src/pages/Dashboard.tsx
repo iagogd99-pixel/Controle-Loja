@@ -229,7 +229,7 @@ export default function Dashboard() {
             <LayoutDashboard className="w-6 h-6" />
           </div>
           <div>
-            <h1 className="text-2xl font-black text-primary tracking-tight leading-none">Painel</h1>
+            <h1 className="text-2xl font-black text-primary tracking-tight leading-none">Início</h1>
             <p className="text-[10px] text-slate-400 uppercase font-bold tracking-widest mt-1">Visão Geral do Negócio</p>
           </div>
         </div>
