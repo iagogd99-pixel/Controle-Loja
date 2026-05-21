@@ -52,7 +52,6 @@ export default function Dashboard() {
     netProfitAllTime: 0
   });
   const [recentSales, setRecentSales] = useState<Sale[]>([]);
-  const [recentMovements, setRecentMovements] = useState<Movement[]>([]);
   const [chartData, setChartData] = useState<any[]>([]);
 
   useEffect(() => {
@@ -64,14 +63,28 @@ export default function Dashboard() {
     
     const unsubSalesToday = onSnapshot(query(collection(db, 'sales'), where('timestamp', '>=', today.toISOString())), (snapshot) => {
       const sales = snapshot.docs.map(doc => doc.data() as Sale);
-      const revenue = sales.filter(s => s.status === 'completed').reduce((acc, sale) => acc + (sale.total || 0), 0);
+      const revenue = sales.filter(s => s.status === 'completed').reduce((acc, sale) => {
+        const paid1 = sale.paymentStatus === 'paid' ? (sale.isSplitPayment ? (sale.splitAmount1 || 0) : (sale.total || 0)) : 0;
+        const paid2 = (sale.isSplitPayment && sale.paymentStatus2 === 'paid') ? (sale.splitAmount2 || 0) : 0;
+        return acc + paid1 + paid2;
+      }, 0);
       const cost = sales.filter(s => s.status === 'completed').reduce((acc, sale) => {
-        return acc + (sale.items?.reduce((itemAcc, item) => itemAcc + (item.costPrice * item.quantity), 0) || 0);
+        const saleCost = sale.items?.reduce((itemAcc, item) => itemAcc + ((item.costPrice || 0) * item.quantity), 0) || 0;
+        const isM1Paid = sale.paymentStatus === 'paid';
+        const isM2Paid = sale.isSplitPayment && sale.paymentStatus2 === 'paid';
+        
+        if (!sale.isSplitPayment) {
+          return acc + (isM1Paid ? saleCost : 0);
+        } else {
+          const paidTotal = (isM1Paid ? (sale.splitAmount1 || 0) : 0) + (isM2Paid ? (sale.splitAmount2 || 0) : 0);
+          const ratio = sale.total > 0 ? (paidTotal / sale.total) : 0;
+          return acc + (saleCost * ratio);
+        }
       }, 0);
       
       setStats(prev => ({
         ...prev,
-        salesCount: sales.length,
+        salesCount: sales.filter(s => s.status === 'completed' && (s.paymentStatus === 'paid' || (s.isSplitPayment && s.paymentStatus2 === 'paid'))).length,
         dailyRevenue: revenue,
         dailyProfit: revenue - cost
       }));
@@ -84,9 +97,23 @@ export default function Dashboard() {
 
     const unsubSalesMonth = onSnapshot(query(collection(db, 'sales'), where('timestamp', '>=', startOfMonth.toISOString())), (snapshot) => {
       const sales = snapshot.docs.map(doc => doc.data() as Sale);
-      const revenue = sales.filter(s => s.status === 'completed').reduce((acc, sale) => acc + (sale.total || 0), 0);
+      const revenue = sales.filter(s => s.status === 'completed').reduce((acc, sale) => {
+        const paid1 = sale.paymentStatus === 'paid' ? (sale.isSplitPayment ? (sale.splitAmount1 || 0) : (sale.total || 0)) : 0;
+        const paid2 = (sale.isSplitPayment && sale.paymentStatus2 === 'paid') ? (sale.splitAmount2 || 0) : 0;
+        return acc + paid1 + paid2;
+      }, 0);
       const cost = sales.filter(s => s.status === 'completed').reduce((acc, sale) => {
-        return acc + (sale.items?.reduce((itemAcc, item) => itemAcc + (item.costPrice * item.quantity), 0) || 0);
+        const saleCost = sale.items?.reduce((itemAcc, item) => itemAcc + ((item.costPrice || 0) * item.quantity), 0) || 0;
+        const isM1Paid = sale.paymentStatus === 'paid';
+        const isM2Paid = sale.isSplitPayment && sale.paymentStatus2 === 'paid';
+        
+        if (!sale.isSplitPayment) {
+          return acc + (isM1Paid ? saleCost : 0);
+        } else {
+          const paidTotal = (isM1Paid ? (sale.splitAmount1 || 0) : 0) + (isM2Paid ? (sale.splitAmount2 || 0) : 0);
+          const ratio = sale.total > 0 ? (paidTotal / sale.total) : 0;
+          return acc + (saleCost * ratio);
+        }
       }, 0);
 
       const margin = revenue > 0 ? ((revenue - cost) / revenue) * 100 : 0;
@@ -118,11 +145,6 @@ export default function Dashboard() {
     const qRecentSales = query(collection(db, 'sales'), orderBy('timestamp', 'desc'), limit(5));
     const unsubRecentSales = onSnapshot(qRecentSales, (snapshot) => {
       setRecentSales(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Sale)));
-    });
-
-    const qRecentMovements = query(collection(db, 'movements'), orderBy('timestamp', 'desc'), limit(5));
-    const unsubRecentMovements = onSnapshot(qRecentMovements, (snapshot) => {
-      setRecentMovements(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Movement)));
     });
 
     // Real-time calculation of Lifetime Net Profit (all inflows - all outflows)
@@ -164,9 +186,13 @@ export default function Dashboard() {
 
       querySnapshot.forEach((doc) => {
         const sale = doc.data() as Sale;
+        const paid1 = sale.paymentStatus === 'paid' ? (sale.isSplitPayment ? (sale.splitAmount1 || 0) : (sale.total || 0)) : 0;
+        const paid2 = (sale.isSplitPayment && sale.paymentStatus2 === 'paid') ? (sale.splitAmount2 || 0) : 0;
+        const paidTotal = paid1 + paid2;
+        
         const date = new Date(sale.timestamp);
         const dateKey = date.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
-        salesByDay[dateKey] = (salesByDay[dateKey] || 0) + (sale.total || 0);
+        salesByDay[dateKey] = (salesByDay[dateKey] || 0) + paidTotal;
       });
 
       for (let i = 9; i >= 0; i--) {
@@ -191,7 +217,6 @@ export default function Dashboard() {
       unsubPendingSales();
       unsubPendingPurchases();
       unsubRecentSales();
-      unsubRecentMovements();
       unsubAllTimeCashMovements();
     };
   }, []);
@@ -289,7 +314,7 @@ export default function Dashboard() {
           </div>
           <div className="h-[300px] w-full min-h-[300px]">
             <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
-              <BarChart data={chartData} margin={{ top: 10, right: 10, left: -25, bottom: 0 }}>
+              <BarChart data={chartData} margin={{ top: 10, right: 10, left: 15, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#334155" opacity={0.1} />
                 <XAxis 
                    dataKey="name" 
@@ -301,9 +326,9 @@ export default function Dashboard() {
                  <YAxis 
                    axisLine={false} 
                    tickLine={false} 
-                   width={45}
+                   width={65}
                    tick={{fill: '#94a3b8', fontSize: 10, fontWeight: 'bold'}}
-                   tickFormatter={(val) => `R$${val >= 1000 ? (val/1000).toFixed(0) + 'k' : val}`}
+                   tickFormatter={(val) => `R$ ${val >= 1000 ? (val/1000).toFixed(0) + 'k' : val}`}
                  />
                  <Tooltip 
                    cursor={{ fill: 'rgba(59, 130, 246, 0.05)' }}
@@ -331,14 +356,14 @@ export default function Dashboard() {
       </div>
 
       {/* Stock Alerts & Movements */}
-      <div className="grid grid-cols-1 gap-8 px-2">
+      <div className="hidden grid grid-cols-1 gap-8 px-2">
          <div className="bg-white dark:bg-slate-900 p-6 rounded-xl shadow-sm border border-gray-100 dark:border-slate-800">
             <h3 className="font-bold text-lg text-slate-800 dark:text-slate-100 mb-6 flex items-center gap-2">
               <TrendingUp className="w-5 h-5 text-accent" />
               Últimas Movimentações
             </h3>
             <div className="space-y-4">
-              {recentMovements.map((mov) => (
+              {[]?.map((mov: any) => (
                 <div key={mov.id} className="flex items-center gap-4 hover:bg-gray-50 dark:hover:bg-slate-800/50 p-2 rounded-xl transition-colors">
                   <div className={cn(
                     "w-10 h-10 rounded-xl flex items-center justify-center",

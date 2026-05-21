@@ -41,7 +41,6 @@ const CATEGORY_TYPES: CategoryType[] = [
   { id: 'categoria', label: 'Categorias', placeholder: 'Categorias...', icon: Tag },
   { id: 'tamanho', label: 'Tamanhos', placeholder: 'Tam...', icon: Maximize2 },
   { id: 'cor', label: 'Cores', placeholder: 'Cores...', icon: Palette },
-  { id: 'gênero', label: 'Gêneros', placeholder: 'M/F...', icon: Users },
 ];
 
 export default function Categories() {

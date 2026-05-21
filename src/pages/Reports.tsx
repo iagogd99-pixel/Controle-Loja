@@ -62,12 +62,29 @@ export default function Reports() {
   };
 
   const filteredSales = getFilteredSales();
-  const faturamentoPeriodo = filteredSales.reduce((acc, s) => acc + s.total, 0);
+  const faturamentoPeriodo = filteredSales.reduce((acc, sale) => {
+    const paid1 = sale.paymentStatus === 'paid' ? (sale.isSplitPayment ? (sale.splitAmount1 || 0) : (sale.total || 0)) : 0;
+    const paid2 = (sale.isSplitPayment && sale.paymentStatus2 === 'paid') ? (sale.splitAmount2 || 0) : 0;
+    return acc + paid1 + paid2;
+  }, 0);
   
   // Calculate Profit
-  const lucroPeriodo = filteredSales.reduce((acc, s) => {
-    const saleCost = s.items?.reduce((itemAcc, item) => itemAcc + ((item.costPrice || 0) * item.quantity), 0) || 0;
-    return acc + (s.total - saleCost);
+  const lucroPeriodo = filteredSales.reduce((acc, sale) => {
+    const saleCost = sale.items?.reduce((itemAcc, item) => itemAcc + ((item.costPrice || 0) * item.quantity), 0) || 0;
+    const isM1Paid = sale.paymentStatus === 'paid';
+    const isM2Paid = sale.isSplitPayment && sale.paymentStatus2 === 'paid';
+    
+    let paidTotal = 0;
+    let costFraction = 0;
+    if (!sale.isSplitPayment) {
+      paidTotal = isM1Paid ? (sale.total || 0) : 0;
+      costFraction = isM1Paid ? saleCost : 0;
+    } else {
+      paidTotal = (isM1Paid ? (sale.splitAmount1 || 0) : 0) + (isM2Paid ? (sale.splitAmount2 || 0) : 0);
+      const ratio = sale.total > 0 ? (paidTotal / sale.total) : 0;
+      costFraction = saleCost * ratio;
+    }
+    return acc + (paidTotal - costFraction);
   }, 0);
 
   const margemLucro = faturamentoPeriodo > 0 ? (lucroPeriodo / faturamentoPeriodo) * 100 : 0;

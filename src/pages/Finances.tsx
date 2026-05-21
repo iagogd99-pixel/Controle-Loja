@@ -116,7 +116,7 @@ interface Movement {
 }
 
 export default function Finances() {
-  const { profile, verifyPassword } = useAuth();
+  const { profile, isAdmin, verifyPassword } = useAuth();
   const [activeSession, setActiveSession] = useState<CashSession | null>(null);
   const [movements, setMovements] = useState<Movement[]>([]);
   const [pendingSales, setPendingSales] = useState<any[]>([]);
@@ -159,8 +159,9 @@ export default function Finances() {
       setShowPasswordPrompt(false);
       setPasswordInput('');
       if (pendingAction) {
-        pendingAction();
+        const action = pendingAction;
         setPendingAction(null);
+        await action();
       }
     } else {
       alert('Senha incorreta. Tente novamente.');
@@ -297,9 +298,24 @@ export default function Finances() {
       snapshot.forEach(doc_ => {
         const sale = doc_.data();
         if (sale.items && Array.isArray(sale.items)) {
+          let saleProfit = 0;
           sale.items.forEach((item: any) => {
-            profit += (item.price - (item.costPrice || 0)) * item.quantity;
+            saleProfit += (item.price - (item.costPrice || 0)) * item.quantity;
           });
+
+          // Apply proportion based on paid amount
+          const isM1Paid = sale.paymentStatus === 'paid';
+          const isM2Paid = sale.isSplitPayment && sale.paymentStatus2 === 'paid';
+          
+          if (!sale.isSplitPayment) {
+            if (isM1Paid) {
+              profit += saleProfit;
+            }
+          } else {
+            const paidTotal = (isM1Paid ? (sale.splitAmount1 || 0) : 0) + (isM2Paid ? (sale.splitAmount2 || 0) : 0);
+            const ratio = sale.total > 0 ? (paidTotal / sale.total) : 0;
+            profit += saleProfit * ratio;
+          }
         }
       });
       // Deduct potential discounts or add fees from the sale level if desired, but items usually include that
@@ -438,28 +454,28 @@ export default function Finances() {
   const saldoAtual = activeSession ? (activeSession.openingBalance + totalInflows - totalOutflows) : 0;
   const saldoTotal = activeSession ? (activeSession.openingBalance + stats.totalSales + stats.totalSupplies - stats.totalWithdrawals - stats.totalPurchases) : 0;
 
-  const handleDeleteMovement = async (m: Movement) => {
-     if (!profile || profile.role !== 'admin') {
+  const handleDeleteMovement = (m: Movement) => {
+     if (!isAdmin) {
        alert('Apenas administradores podem excluir movimentações.');
        return;
      }
 
-     if (!confirm(`Deseja realmente excluir esta movimentação de ${formatCurrency(m.amount)} (${m.reason})?`)) return;
+     const action = async () => {
+       try {
+         setSubmitting(true);
+         await deleteDoc(doc(db, 'cash_movements', m.id));
+         alert('Movimentação excluída com sucesso!');
+       } catch (err) {
+         console.error(err);
+         alert('Erro ao excluir movimentação.');
+       } finally {
+         setSubmitting(false);
+       }
+     };
 
-     try {
-       setSubmitting(true);
-       await deleteDoc(doc(db, 'cash_movements', m.id));
-       
-       // Handle side effects (e.g. if it was a purchase, maybe update purchase status)
-       // For now, just delete the movement as requested to "not interfere"
-       
-       alert('Movimentação excluída com sucesso!');
-     } catch (err) {
-       console.error(err);
-       alert('Erro ao excluir movimentação.');
-     } finally {
-       setSubmitting(false);
-     }
+     setPasswordPromptTitle('Confirmar Exclusão');
+     setPendingAction(() => action);
+     setShowPasswordPrompt(true);
   };
 
   return (
@@ -687,10 +703,10 @@ export default function Finances() {
                             <p className={cn("text-sm font-black", m.type === 'in' ? "text-success" : "text-danger")}>
                               {m.type === 'in' ? '+' : '-'} {formatCurrency(m.amount)}
                             </p>
-                            {profile?.role === 'admin' && (
+                            {isAdmin && (
                               <button 
                                 onClick={() => handleDeleteMovement(m)}
-                                className="p-2 text-slate-300 hover:text-danger opacity-0 group-hover:opacity-100 transition-all"
+                                className="p-2 text-slate-400 hover:text-danger active:scale-95 transition-all cursor-pointer"
                                 title="Excluir movimentação"
                               >
                                 <Trash2 className="w-4 h-4" />

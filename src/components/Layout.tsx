@@ -66,7 +66,6 @@ const menuItems: MenuItem[] = [
       { path: '/compras-pendentes', label: 'Compras a Pagar', icon: Clock },
     ]
   },
-  { path: '/movimentacoes', label: 'Movimentações', icon: History },
   { 
     label: 'Produtos / Estoque', 
     icon: Package,
@@ -75,6 +74,7 @@ const menuItems: MenuItem[] = [
       { path: '/produtos', label: 'Estoque', icon: Package },
     ]
   },
+  { path: '/movimentacoes', label: 'Movimentações', icon: History },
   { path: '/relatorios', label: 'Relatórios', icon: BarChart3 },
   { path: '/clientes', label: 'Clientes', icon: Users },
   { path: '/fornecedores', label: 'Fornecedores', icon: Truck },
