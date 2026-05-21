@@ -662,12 +662,12 @@ export default function Finances() {
                 <div className="space-y-4">
                   <StatBox label="Saldo do Caixa" value={saldoAtual} icon={DollarSign} iconColor="text-white" active />
                   <div className="grid grid-cols-2 gap-4">
-                    <StatBox label="Vendas do Dia" value={stats.totalSales} icon={TrendingUp} iconColor="text-gray-400" />
-                    <StatBox label="Lucro de Hoje" value={stats.lucroHoje} icon={TrendingUp} iconColor="text-gray-400" />
+                    <StatBox label="Vendas do Dia" value={stats.totalSales} icon={TrendingUp} iconColor="text-gray-400" smaller />
+                    <StatBox label="Lucro de Hoje" value={stats.lucroHoje} icon={TrendingUp} iconColor="text-gray-400" smaller />
                   </div>
                   <div className="grid grid-cols-2 gap-4">
-                    <StatBox label="Saldo de Abertura" value={activeSession.openingBalance} icon={Calculator} iconColor="text-gray-400" />
-                    <StatBox label="Liquidez Total" value={saldoTotal} icon={Wallet} iconColor="text-teal-600" />
+                    <StatBox label="Saldo Inicial" value={activeSession.openingBalance} icon={Calculator} iconColor="text-gray-400" smaller />
+                    <StatBox label="Liquidez Total" value={saldoTotal} icon={Wallet} iconColor="text-teal-600" smaller />
                   </div>
                 </div>
 
@@ -739,8 +739,8 @@ export default function Finances() {
         ) : (
           <div className="space-y-6 px-1">
             <div className="grid grid-cols-2 gap-4">
-              <StatBox label="A Receber (Vendas)" value={pendingSales.reduce((acc, s) => acc + (s.paymentStatus === 'pending' ? (s.splitAmount1 || s.total) : 0) + (s.paymentStatus2 === 'pending' ? (s.splitAmount2 || 0) : 0), 0)} icon={ArrowUpRight} iconColor="text-teal-500" />
-              <StatBox label="A Pagar (Compras)" value={pendingPurchases.reduce((acc, p) => acc + (p.paymentStatus === 'pending' ? (p.splitAmount1 || p.total) : 0) + (p.paymentStatus2 === 'pending' ? (p.splitAmount2 || 0) : 0), 0)} icon={Minus} iconColor="text-rose-500" />
+              <StatBox label="A Receber (Vendas)" value={pendingSales.reduce((acc, s) => acc + (s.paymentStatus === 'pending' ? (s.splitAmount1 || s.total) : 0) + (s.paymentStatus2 === 'pending' ? (s.splitAmount2 || 0) : 0), 0)} icon={ArrowUpRight} iconColor="text-teal-500" smaller />
+              <StatBox label="A Pagar (Compras)" value={pendingPurchases.reduce((acc, p) => acc + (p.paymentStatus === 'pending' ? (p.splitAmount1 || p.total) : 0) + (p.paymentStatus2 === 'pending' ? (p.splitAmount2 || 0) : 0), 0)} icon={Minus} iconColor="text-rose-500" smaller />
             </div>
 
             <div className="bg-white border border-gray-100 rounded-2xl overflow-hidden shadow-sm">
@@ -1006,7 +1006,7 @@ export default function Finances() {
   );
 }
 
-function StatBox({ label, value, icon: Icon, iconColor, active }: any) {
+function StatBox({ label, value, icon: Icon, iconColor, active, smaller }: any) {
   return (
     <div className={cn(
       "p-5 rounded-2xl border transition-all",
@@ -1016,19 +1016,19 @@ function StatBox({ label, value, icon: Icon, iconColor, active }: any) {
     )}>
       <div className="flex items-center justify-between mb-2">
         <span className={cn(
-          "text-[10px] font-bold uppercase tracking-tight",
+          "text-[10px] font-bold uppercase tracking-tight truncate whitespace-nowrap",
           active ? "text-white/60" : "text-slate-400"
-        )}>{label}</span>
+        )} title={label}>{label}</span>
         {active ? (
           <div className="w-8 h-8 bg-white/10 rounded-lg flex items-center justify-center">
             <Icon className="w-4 h-4 text-white" />
           </div>
-        ) : <Icon className={cn("w-4 h-4", iconColor)} />}
+        ) : <Icon className={cn("w-4 h-4 shrink-0", iconColor)} />}
       </div>
       <p className={cn(
-        "text-2xl font-black tracking-tighter",
+        smaller ? "text-[19px] font-black tracking-tighter truncate whitespace-nowrap" : "text-2xl font-black tracking-tighter",
         active ? "text-white" : "text-primary"
-      )}>
+      )} title={formatCurrency(value)}>
         {formatCurrency(value)}
       </p>
     </div>
