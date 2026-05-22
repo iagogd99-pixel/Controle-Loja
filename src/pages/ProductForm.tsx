@@ -42,6 +42,8 @@ const schema = z.object({
   gender: z.string().optional(),
   stock: z.number().min(0, 'Estoque não pode ser negativo'),
   minStock: z.number().min(0, 'Estoque mínimo não pode ser negativo'),
+  baseCostPrice: z.number().min(0, 'Preço de custo base obrigatório'),
+  costOverheadPercent: z.number().min(0, 'Porcentagem não pode ser negativa'),
   costPrice: z.number().min(0, 'Preço de custo obrigatório'),
   salePrice: z.number().min(0, 'Preço de venda obrigatório'),
   status: z.enum(['active', 'inactive']),
@@ -65,12 +67,24 @@ export default function ProductForm() {
     defaultValues: {
       status: 'active',
       stock: 0,
-      minStock: 5,
+      minStock: 0,
+      baseCostPrice: 0,
+      costOverheadPercent: 0,
       costPrice: 0,
       salePrice: 0,
       sizes: []
     }
   });
+
+  const watchedBaseCost = watch('baseCostPrice');
+  const watchedOverheadPercent = watch('costOverheadPercent');
+
+  useEffect(() => {
+    const base = watchedBaseCost !== undefined ? watchedBaseCost : 0;
+    const pct = watchedOverheadPercent !== undefined ? watchedOverheadPercent : 0;
+    const finalCost = base * (1 + pct / 100);
+    setValue('costPrice', Number(finalCost.toFixed(2)));
+  }, [watchedBaseCost, watchedOverheadPercent, setValue]);
 
   useEffect(() => {
     const fetchDropdowns = async () => {
@@ -88,7 +102,14 @@ export default function ProductForm() {
         const docSnap = await getDoc(docRef);
         if (docSnap.exists()) {
           const data = docSnap.data();
-          reset(data as FormData);
+          const baseCost = data.baseCostPrice !== undefined ? data.baseCostPrice : (data.costPrice || 0);
+          const overhead = data.costOverheadPercent !== undefined ? data.costOverheadPercent : 0;
+          reset({
+            ...(data as FormData),
+            baseCostPrice: baseCost,
+            costOverheadPercent: overhead,
+            costPrice: data.costPrice || 0,
+          });
           setImages(data.images || []);
           setSelectedSizes(data.sizes || (data.size ? [data.size] : []));
           setSizeStock(data.sizeStock || {});
@@ -385,24 +406,56 @@ export default function ProductForm() {
               <div className="w-1.5 h-4 bg-success rounded-full" />
               <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Financeiro</h3>
             </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1">
-                <label className="text-[11px] font-bold text-slate-600 uppercase ml-1">Custo (R$)</label>
-                <input 
-                  type="number" step="0.01" 
-                  {...register('costPrice', { valueAsNumber: true })} 
-                  className="form-input py-2.5 text-sm bg-slate-50 border-none"
-                  placeholder="0,00"
-                />
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <label className="text-[11px] font-bold text-slate-600 uppercase ml-1">Custo Base (R$)</label>
+                  <input 
+                    type="number" step="0.01" 
+                    {...register('baseCostPrice', { valueAsNumber: true })} 
+                    className="form-input py-2.5 text-sm bg-slate-50 border-none"
+                    placeholder="0,00"
+                  />
+                  {errors.baseCostPrice && (
+                    <p className="text-[10px] text-danger font-bold pl-1">{errors.baseCostPrice.message}</p>
+                  )}
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[11px] font-bold text-slate-600 uppercase ml-1">Acréscimo Custo (%)</label>
+                  <input 
+                    type="number" step="0.001" 
+                    {...register('costOverheadPercent', { valueAsNumber: true })} 
+                    className="form-input py-2.5 text-sm bg-slate-50 border-none"
+                    placeholder="0,0"
+                  />
+                  {errors.costOverheadPercent && (
+                    <p className="text-[10px] text-danger font-bold pl-1">{errors.costOverheadPercent.message}</p>
+                  )}
+                </div>
               </div>
-              <div className="space-y-1">
-                <label className="text-[11px] font-bold text-slate-600 uppercase ml-1">Venda (R$)</label>
-                <input 
-                  type="number" step="0.01" 
-                  {...register('salePrice', { valueAsNumber: true })} 
-                  className={cn("form-input py-2.5 text-sm font-black text-accent", errors.salePrice ? "border-danger" : "bg-accent/5 border-none")}
-                  placeholder="0,00"
-                />
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <label className="text-[11px] font-bold text-slate-600 uppercase ml-1">Custo Final (R$)</label>
+                  <input 
+                    type="number" step="0.01" 
+                    {...register('costPrice', { valueAsNumber: true })} 
+                    className="form-input py-2.5 text-sm bg-slate-100 border-none opacity-80 pointer-events-none select-none font-bold"
+                    placeholder="0,00"
+                    readOnly
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[11px] font-bold text-slate-600 uppercase ml-1">Venda (R$)</label>
+                  <input 
+                    type="number" step="0.01" 
+                    {...register('salePrice', { valueAsNumber: true })} 
+                    className={cn("form-input py-2.5 text-sm font-black text-accent", errors.salePrice ? "border-danger" : "bg-accent/5 border-none")}
+                    placeholder="0,00"
+                  />
+                  {errors.salePrice && (
+                    <p className="text-[10px] text-danger font-bold pl-1">{errors.salePrice.message}</p>
+                  )}
+                </div>
               </div>
             </div>
           </div>

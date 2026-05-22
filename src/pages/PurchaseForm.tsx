@@ -332,6 +332,8 @@ export default function PurchaseForm() {
 
   const cartTotal = cart.reduce((acc, item) => acc + item.total, 0);
   const finalTotal = cartTotal - (discount + discount2) + fee + freight + (interest + interest2);
+  const divisionResult = cartTotal > 0 ? Number((finalTotal / cartTotal).toFixed(4)) : 1;
+  const percentageOverhead = (divisionResult - 1) * 100;
 
   const handleSubmit = async () => {
     if (!profile || cart.length === 0 || submitting) return;
@@ -508,12 +510,15 @@ export default function PurchaseForm() {
         for (const item of cart) {
           const productRef = doc(db, "products", item.productId);
 
+          const finalCostPrice = Number((item.price * (1 + percentageOverhead / 100)).toFixed(2));
+
           const updateData: any = {
             baseCostPrice: item.price,
+            costOverheadPercent: Number(percentageOverhead.toFixed(4)),
             shippingCostPrice: 0,
             interestCostPrice: 0,
             overheadCostPrice: 0,
-            costPrice: item.price,
+            costPrice: finalCostPrice,
             updatedAt: serverTimestamp(),
           };
 
@@ -1185,11 +1190,24 @@ export default function PurchaseForm() {
               <span>Subtotal</span>
               <span>{formatCurrency(cartTotal)}</span>
             </div>
+            {cartTotal > 0 && (
+              <div className="flex justify-between items-center text-[10px] font-bold text-slate-400 mb-0.5">
+                <span>Acréscimo no Custo dos Produtos</span>
+                <span className="text-accent font-black">
+                  {percentageOverhead >= 0 ? "+" : ""}
+                  {percentageOverhead.toLocaleString("pt-BR", {
+                    minimumFractionDigits: 1,
+                    maximumFractionDigits: 4,
+                  })}
+                  %
+                </span>
+              </div>
+            )}
             <div className="flex justify-between items-center mb-2 pt-1.5 border-t border-gray-200/60">
               <span className="text-xs font-bold text-slate-600">
                 Total da Nota
               </span>
-              <span className="text-2xl font-black text-primary">
+              <span className="text-2xl font-black text-primary border-none outline-none">
                 {formatCurrency(finalTotal)}
               </span>
             </div>

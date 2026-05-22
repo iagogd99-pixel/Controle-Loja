@@ -51,6 +51,11 @@ export default function PurchasesPending() {
   const [searchTerm, setSearchTerm] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
 
+  // Calculations for selected purchase overhead
+  const selectedPurchaseCartTotal = selectedPurchase?.items?.reduce((acc: number, item: any) => acc + (item.total || 0), 0) || 0;
+  const selectedPurchaseDivisionResult = selectedPurchaseCartTotal > 0 ? Number((selectedPurchase.total / selectedPurchaseCartTotal).toFixed(4)) : 1;
+  const selectedPurchasePercentageOverhead = (selectedPurchaseDivisionResult - 1) * 100;
+
   // Password Verification State
   const [showPasswordPrompt, setShowPasswordPrompt] = useState(false);
   const [passwordInput, setPasswordInput] = useState('');
@@ -475,6 +480,21 @@ export default function PurchasesPending() {
                       )}
                     </div>
                   </div>
+                  {selectedPurchaseCartTotal > 0 && (
+                    <div className="p-4 bg-slate-50 rounded-3xl border border-slate-100 flex flex-col justify-center">
+                      <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1 flex items-center gap-1">
+                        <TrendingUp className="w-3 h-3 text-accent" /> Acréscimo Custo
+                      </p>
+                      <p className="text-xs font-black text-accent font-mono leading-none mt-1">
+                        {selectedPurchasePercentageOverhead >= 0 ? "+" : ""}
+                        {selectedPurchasePercentageOverhead.toLocaleString("pt-BR", {
+                          minimumFractionDigits: 1,
+                          maximumFractionDigits: 4,
+                        })}
+                        %
+                      </p>
+                    </div>
+                  )}
                 </div>
 
                 <div className="p-4 bg-slate-50 rounded-3xl border border-slate-100">

@@ -285,6 +285,7 @@ export default function LancarNota() {
           const updateData: any = {
             stock: increment(item.quantity),
             baseCostPrice: item.price,
+            costOverheadPercent: 0,
             costPrice: item.price,
             updatedAt: serverTimestamp(),
           };
