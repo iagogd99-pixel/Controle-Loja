@@ -483,7 +483,7 @@ export default function PurchasesPending() {
                   {selectedPurchaseCartTotal > 0 && (
                     <div className="p-4 bg-slate-50 rounded-3xl border border-slate-100 flex flex-col justify-center">
                       <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1 flex items-center gap-1">
-                        <TrendingUp className="w-3 h-3 text-accent" /> Acréscimo Custo
+                        <TrendingUp className="w-3 h-3 text-accent" /> Custos Extras
                       </p>
                       <p className="text-xs font-black text-accent font-mono leading-none mt-1">
                         {selectedPurchasePercentageOverhead >= 0 ? "+" : ""}

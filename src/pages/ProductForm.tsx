@@ -421,7 +421,7 @@ export default function ProductForm() {
                   )}
                 </div>
                 <div className="space-y-1">
-                  <label className="text-[11px] font-bold text-slate-600 uppercase ml-1">Acréscimo Custo (%)</label>
+                  <label className="text-[11px] font-bold text-slate-600 uppercase ml-1">Custos Extras (%)</label>
                   <input 
                     type="number" step="0.001" 
                     {...register('costOverheadPercent', { valueAsNumber: true })} 
