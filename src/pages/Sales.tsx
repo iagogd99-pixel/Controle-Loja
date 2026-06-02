@@ -31,7 +31,7 @@ import {
 import { db } from '@/src/lib/firebase';
 import { useAuth } from '@/src/contexts/AuthContext';
 import { Product, SaleItem, Client } from '@/src/types';
-import { formatCurrency, cn, getProductSku, sortSizes, getBrasiliaTime, getBrasiliaISO } from '@/src/lib/utils';
+import { formatCurrency, cn, getProductSku, sortSizes, getBrasiliaTime, getBrasiliaISO, sanitizeForFirestore } from '@/src/lib/utils';
 import { format } from 'date-fns-tz';
 import { motion, AnimatePresence } from 'motion/react';
 import { useNavigate } from 'react-router-dom';
@@ -42,26 +42,103 @@ export default function Sales() {
   const [products, setProducts] = useState<Product[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
-  const [cart, setCart] = useState<SaleItem[]>([]);
-  const [selectedClientId, setSelectedClientId] = useState<string>('unregistered');
-  const [customerName, setCustomerName] = useState('');
-  const [discount, setDiscount] = useState<number>(0);
-  const [storeFee, setStoreFee] = useState<number>(0);
-  const [customerFee, setCustomerFee] = useState<number>(0);
-  const [discount2, setDiscount2] = useState<number>(0);
-  const [storeFee2, setStoreFee2] = useState<number>(0);
-  const [customerFee2, setCustomerFee2] = useState<number>(0);
-  const [installments, setInstallments] = useState<number>(1);
-  const [installments2, setInstallments2] = useState<number>(1);
-  const [paymentMethod, setPaymentMethod] = useState<'dinheiro' | 'pix' | 'cartão' | 'transferência' | string>('dinheiro');
-  const [isSplitPayment, setIsSplitPayment] = useState(false);
-  const [paymentMethod2, setPaymentMethod2] = useState<'dinheiro' | 'pix' | 'cartão' | 'transferência' | string>('pix');
-  const [splitAmount1, setSplitAmount1] = useState<number>(0);
-  const [paymentStatus, setPaymentStatus] = useState<'paid' | 'pending'>('paid');
-  const [paymentStatus2, setPaymentStatus2] = useState<'paid' | 'pending'>('paid');
+  const [cart, setCart] = useState<SaleItem[]>(() => {
+    try {
+      const saved = localStorage.getItem('sales_cart');
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [selectedClientId, setSelectedClientId] = useState<string>(() => {
+    return localStorage.getItem('sales_selectedClientId') || 'unregistered';
+  });
+  const [customerName, setCustomerName] = useState(() => {
+    return localStorage.getItem('sales_customerName') || '';
+  });
+  const [discount, setDiscount] = useState<number>(() => {
+    return Number(localStorage.getItem('sales_discount')) || 0;
+  });
+  const [storeFee, setStoreFee] = useState<number>(() => {
+    return Number(localStorage.getItem('sales_storeFee')) || 0;
+  });
+  const [customerFee, setCustomerFee] = useState<number>(() => {
+    return Number(localStorage.getItem('sales_customerFee')) || 0;
+  });
+  const [discount2, setDiscount2] = useState<number>(() => {
+    return Number(localStorage.getItem('sales_discount2')) || 0;
+  });
+  const [storeFee2, setStoreFee2] = useState<number>(() => {
+    return Number(localStorage.getItem('sales_storeFee2')) || 0;
+  });
+  const [customerFee2, setCustomerFee2] = useState<number>(() => {
+    return Number(localStorage.getItem('sales_customerFee2')) || 0;
+  });
+  const [installments, setInstallments] = useState<number>(() => {
+    return Number(localStorage.getItem('sales_installments')) || 1;
+  });
+  const [installments2, setInstallments2] = useState<number>(() => {
+    return Number(localStorage.getItem('sales_installments2')) || 1;
+  });
+  const [paymentMethod, setPaymentMethod] = useState<'dinheiro' | 'pix' | 'cartão' | 'transferência' | string>(() => {
+    return localStorage.getItem('sales_paymentMethod') || 'dinheiro';
+  });
+  const [isSplitPayment, setIsSplitPayment] = useState(() => {
+    return localStorage.getItem('sales_isSplitPayment') === 'true';
+  });
+  const [paymentMethod2, setPaymentMethod2] = useState<'dinheiro' | 'pix' | 'cartão' | 'transferência' | string>(() => {
+    return localStorage.getItem('sales_paymentMethod2') || 'pix';
+  });
+  const [splitAmount1, setSplitAmount1] = useState<number>(() => {
+    return Number(localStorage.getItem('sales_splitAmount1')) || 0;
+  });
+  const [paymentStatus, setPaymentStatus] = useState<'paid' | 'pending'>(() => {
+    return (localStorage.getItem('sales_paymentStatus') as 'paid' | 'pending') || 'paid';
+  });
+  const [paymentStatus2, setPaymentStatus2] = useState<'paid' | 'pending'>(() => {
+    return (localStorage.getItem('sales_paymentStatus2') as 'paid' | 'pending') || 'paid';
+  });
   const [isFinishing, setIsFinishing] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
+
+  useEffect(() => {
+    localStorage.setItem('sales_cart', JSON.stringify(cart));
+    localStorage.setItem('sales_selectedClientId', selectedClientId);
+    localStorage.setItem('sales_customerName', customerName);
+    localStorage.setItem('sales_discount', String(discount));
+    localStorage.setItem('sales_storeFee', String(storeFee));
+    localStorage.setItem('sales_customerFee', String(customerFee));
+    localStorage.setItem('sales_discount2', String(discount2));
+    localStorage.setItem('sales_storeFee2', String(storeFee2));
+    localStorage.setItem('sales_customerFee2', String(customerFee2));
+    localStorage.setItem('sales_installments', String(installments));
+    localStorage.setItem('sales_installments2', String(installments2));
+    localStorage.setItem('sales_paymentMethod', paymentMethod);
+    localStorage.setItem('sales_isSplitPayment', String(isSplitPayment));
+    localStorage.setItem('sales_paymentMethod2', paymentMethod2);
+    localStorage.setItem('sales_splitAmount1', String(splitAmount1));
+    localStorage.setItem('sales_paymentStatus', paymentStatus);
+    localStorage.setItem('sales_paymentStatus2', paymentStatus2);
+  }, [
+    cart,
+    selectedClientId,
+    customerName,
+    discount,
+    storeFee,
+    customerFee,
+    discount2,
+    storeFee2,
+    customerFee2,
+    installments,
+    installments2,
+    paymentMethod,
+    isSplitPayment,
+    paymentMethod2,
+    splitAmount1,
+    paymentStatus,
+    paymentStatus2
+  ]);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -143,6 +220,19 @@ export default function Sales() {
     }).filter(item => item.quantity > 0));
   };
 
+  const updatePrice = (productId: string, size: string | undefined, price: number) => {
+    const cartItemId = `${productId}-${size || 'no-size'}`;
+    setCart(prev => prev.map(item => {
+      if (`${item.productId}-${item.size || 'no-size'}` === cartItemId) {
+        return { 
+          ...item, 
+          price: price, 
+          total: item.quantity * price 
+        };
+      }
+      return item;
+    }));
+  };
   const cartSubtotal = cart.reduce((acc, item) => acc + item.total, 0);
   const cartTotal = Math.max(0, cartSubtotal - (discount + discount2) + (customerFee + customerFee2));
 
@@ -230,7 +320,7 @@ export default function Sales() {
         status: 'completed'
       } as any;
       
-      const saleRef = await addDoc(collection(db, 'sales'), sale);
+      const saleRef = await addDoc(collection(db, 'sales'), sanitizeForFirestore(sale));
       const saleId = saleRef.id;
       
       // 1.1 Record Financial Movement for the cash
@@ -324,6 +414,12 @@ export default function Sales() {
       setInstallments(1);
       setInstallments2(1);
       setSelectedClientId('unregistered');
+      setPaymentMethod('dinheiro');
+      setIsSplitPayment(false);
+      setPaymentMethod2('pix');
+      setSplitAmount1(0);
+      setPaymentStatus('paid');
+      setPaymentStatus2('paid');
       
       // Refresh local stock
       const pSnap = await getDocs(collection(db, 'products'));
@@ -415,7 +511,13 @@ export default function Sales() {
                 </div>
                 <div className="overflow-y-auto flex-1 p-2 space-y-1">
                   {filteredProducts.length > 0 ? (
-                    filteredProducts.map(product => (
+                    [...filteredProducts].sort((a, b) => {
+                      const aOut = (a.stock ?? 0) <= 0;
+                      const bOut = (b.stock ?? 0) <= 0;
+                      if (aOut && !bOut) return 1;
+                      if (!aOut && bOut) return -1;
+                      return 0;
+                    }).map(product => (
                       <div 
                         key={product.id}
                         className={cn(
@@ -453,7 +555,7 @@ export default function Sales() {
                             <span className={cn(
                               "text-[10px] font-bold",
                               product.stock <= product.minStock ? "text-danger" : "text-slate-400"
-                            )}>Estoque: {product.stock}</span>
+                            )}>Estoque: {product.stock <= 0 ? "Esgotado" : product.stock}</span>
                           </div>
                         </div>
                         <div className="flex items-center gap-4">
@@ -601,7 +703,7 @@ export default function Sales() {
                 return (
                   <motion.div 
                     layout
-                    key={item.productId}
+                    key={`${item.productId}-${item.size || 'no-size'}`}
                     initial={{ opacity: 0, x: -20 }}
                     animate={{ opacity: 1, x: 0 }}
                     exit={{ opacity: 0, x: -20 }}
@@ -621,15 +723,23 @@ export default function Sales() {
                     <p className="text-xs font-black text-slate-800 uppercase leading-tight truncate">
                       {item.name}
                     </p>
-                    <div className="flex items-center gap-2 mt-1">
+                    <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2 mt-1">
                       <span className="text-[9px] font-bold text-slate-400">SKU: {item.sku}</span>
-                      <span className="text-[10px] font-bold text-accent">
-                        {formatCurrency(item.price)}
-                      </span>
+                      <div className="flex items-center gap-1">
+                        <span className="text-[9px] font-bold text-slate-400">R$</span>
+                        <input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          value={item.price || ''}
+                          onChange={(e) => updatePrice(item.productId, item.size, parseFloat(e.target.value) || 0)}
+                          className="w-16 px-1.5 py-0.5 text-[10px] font-black text-accent bg-white border border-slate-200 rounded-lg focus:outline-none focus:border-accent text-center"
+                        />
+                      </div>
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-2">
                     <div className="flex items-center bg-white rounded-xl p-1 shadow-sm border border-slate-100">
                       <button 
                         onClick={() => updateQuantity(item.productId, item.size, -1)} 
@@ -647,8 +757,8 @@ export default function Sales() {
                     </div>
                     
                     <button 
-                      onClick={() => setCart(prev => prev.filter(i => i.productId !== item.productId))}
-                      className="p-2 text-slate-300 hover:text-danger transition-colors"
+                      onClick={() => setCart(prev => prev.filter(i => `${i.productId}-${i.size || 'no-size'}` !== `${item.productId}-${item.size || 'no-size'}`))}
+                      className="p-1.5 text-slate-300 hover:text-danger transition-colors"
                     >
                       <Trash2 className="w-4 h-4" />
                     </button>

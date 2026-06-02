@@ -32,6 +32,7 @@ import {
 } from "firebase/firestore";
 import { db } from "@/src/lib/firebase";
 import { useAuth } from "@/src/contexts/AuthContext";
+import { Purchase } from "@/src/types";
 import {
   formatCurrency,
   cn,
@@ -92,6 +93,63 @@ export default function LancarNota() {
   const [entryDate, setEntryDate] = useState(
     getBrasiliaTime().toISOString().slice(0, 16),
   );
+
+  const [supplierPurchases, setSupplierPurchases] = useState<Purchase[]>([]);
+  const [loadingPurchases, setLoadingPurchases] = useState(false);
+  const [selectedPurchaseId, setSelectedPurchaseId] = useState<string | null>(null);
+  const [purchaseOverhead, setPurchaseOverhead] = useState<number>(0);
+
+  useEffect(() => {
+    if (!selectedSupplierId) {
+      setSupplierPurchases([]);
+      setSelectedPurchaseId(null);
+      setPurchaseOverhead(0);
+      return;
+    }
+    setLoadingPurchases(true);
+    const q = query(
+      collection(db, "purchases"),
+      where("supplierId", "==", selectedSupplierId)
+    );
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const list = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }) as Purchase);
+      // Sort client-side to prevent missing indexes in Firestore queries
+      list.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+      setSupplierPurchases(list);
+      setLoadingPurchases(false);
+    }, (error) => {
+      console.error("Error loading supplier purchases:", error);
+      setLoadingPurchases(false);
+    });
+    return () => unsubscribe();
+  }, [selectedSupplierId]);
+
+  const handlePullPurchaseItems = (purchase: Purchase) => {
+    const divisionResult = purchase.subtotal > 0 ? (purchase.total / purchase.subtotal) : 1;
+    const percentageOverhead = (divisionResult - 1) * 100;
+    setPurchaseOverhead(percentageOverhead);
+
+    const newCart: NoteItem[] = purchase.items.map((item) => {
+      const basePrice = item.price || 0;
+      const finalPrice = percentageOverhead > 0 
+        ? Number((basePrice * (1 + percentageOverhead / 100)).toFixed(2))
+        : basePrice;
+      return {
+        productId: item.productId,
+        sku: item.sku,
+        size: item.size || undefined,
+        name: item.name,
+        quantity: item.quantity,
+        price: finalPrice,
+        total: Number((finalPrice * item.quantity).toFixed(2)),
+      };
+    });
+    setCart(newCart);
+    setSelectedPurchaseId(purchase.id);
+    if (!noteNumber) {
+      setNoteNumber(`COMPRA-${purchase.id.slice(-6).toUpperCase()}`);
+    }
+  };
 
   // Search state
   const [showProductSearch, setShowProductSearch] = useState(false);
@@ -282,10 +340,14 @@ export default function LancarNota() {
           const productRef = doc(db, "products", item.productId);
 
           // Prepare stock increment
+          const baseCostPrice = purchaseOverhead > 0 
+            ? Number((item.price / (1 + purchaseOverhead / 100)).toFixed(2))
+            : item.price;
+
           const updateData: any = {
             stock: increment(item.quantity),
-            baseCostPrice: item.price,
-            costOverheadPercent: 0,
+            baseCostPrice: baseCostPrice,
+            costOverheadPercent: Number(purchaseOverhead.toFixed(4)),
             costPrice: item.price,
             updatedAt: serverTimestamp(),
           };
@@ -433,6 +495,202 @@ export default function LancarNota() {
               </div>
             </div>
 
+            {/* Supplier Purchases Block */}
+            {selectedSupplierId && (
+              <div className="bg-white rounded-[32px] p-6 shadow-xl border border-gray-100/60 space-y-4">
+                <div className="flex items-center justify-between mb-2 border-b border-slate-50 pb-3">
+                  <div className="flex items-center gap-2">
+                    <div className="w-8 h-8 bg-primary/5 rounded-lg flex items-center justify-center text-primary">
+                      <History className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <h2 className="text-sm font-black text-slate-800 uppercase tracking-widest leading-none">
+                        Compras do Fornecedor
+                      </h2>
+                      <p className="text-[9px] text-slate-400 font-bold uppercase tracking-wider mt-1">
+                        Selecione uma compra para puxar seus itens
+                      </p>
+                    </div>
+                  </div>
+                  {loadingPurchases && (
+                    <Loader2 className="w-4 h-4 text-primary animate-spin" />
+                  )}
+                </div>
+
+                {supplierPurchases.length === 0 ? (
+                  <div className="py-6 text-center text-slate-350">
+                    <p className="text-xs font-bold font-sans">Nenhuma compra registrada para este fornecedor.</p>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    {/* Compras a Pagar (Pendentes) */}
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <h3 className="text-[10px] font-black text-danger uppercase tracking-wider pl-1 flex items-center gap-1.5">
+                          <span className="w-2 h-2 rounded-full bg-danger animate-pulse"></span>
+                          A Pagar
+                        </h3>
+                        <span className="bg-danger/10 text-danger text-[9px] font-black px-2 py-0.5 rounded-full uppercase tracking-wider">
+                          {supplierPurchases.filter(p => p.paymentStatus === 'pending' || p.paymentStatus2 === 'pending').length}
+                        </span>
+                      </div>
+                      <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
+                        {supplierPurchases
+                          .filter(p => p.paymentStatus === 'pending' || p.paymentStatus2 === 'pending')
+                          .map((p) => {
+                            const isCurrentlySelected = selectedPurchaseId === p.id;
+                            const itemsCount = p.items?.reduce((acc, item) => acc + item.quantity, 0) || p.itemsCount || 0;
+                            const divisionResult = p.subtotal > 0 ? (p.total / p.subtotal) : 1;
+                            const percentageOverhead = (divisionResult - 1) * 100;
+                            return (
+                              <div
+                                key={p.id}
+                                className={cn(
+                                  "p-3 rounded-2xl border text-left flex flex-col justify-between gap-2 transition-all duration-200",
+                                  isCurrentlySelected
+                                    ? "bg-primary/5 border-primary shadow-sm"
+                                    : "bg-slate-50 border-slate-100 hover:bg-slate-100/80"
+                                )}
+                              >
+                                <div className="flex justify-between items-start min-w-0 gap-2">
+                                  <div className="min-w-0 flex-1">
+                                    <span className="text-[11px] font-black text-slate-800 uppercase tracking-tight">
+                                      #{p.id.slice(-6).toUpperCase()}
+                                    </span>
+                                    <p className="text-[9px] text-[#94A3B8] font-bold mt-0.5 truncate flex flex-wrap items-center gap-1">
+                                      <span>{new Date(p.timestamp).toLocaleDateString('pt-BR')}</span>
+                                      <span>•</span>
+                                      <span>{itemsCount} {itemsCount === 1 ? 'item' : 'itens'}</span>
+                                      {percentageOverhead > 0 && (
+                                        <>
+                                          <span>•</span>
+                                          <span className="text-accent font-extrabold">
+                                            +{percentageOverhead.toFixed(2)}% acrésc.
+                                          </span>
+                                        </>
+                                      )}
+                                    </p>
+                                  </div>
+                                  <span className="text-xs font-black text-slate-800 shrink-0 font-sans">
+                                    {formatCurrency(p.total)}
+                                  </span>
+                                </div>
+                                <div className="flex justify-between items-center mt-1">
+                                  <span className="text-[8px] font-black uppercase text-danger bg-danger/10 px-1.5 py-0.5 rounded-lg">
+                                    Pendente
+                                  </span>
+                                  {isCurrentlySelected ? (
+                                    <div className="flex items-center gap-1 text-primary">
+                                      <CheckCircle2 className="w-3.5 h-3.5" />
+                                      <span className="text-[9px] font-black uppercase tracking-wider">Puxado</span>
+                                    </div>
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      onClick={() => handlePullPurchaseItems(p)}
+                                      className="px-2.5 py-1 bg-primary text-white text-[9px] font-black rounded-lg uppercase tracking-wider transition-all cursor-pointer shadow-sm hover:scale-105 active:scale-95"
+                                    >
+                                      Puxar Itens
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        {supplierPurchases.filter(p => p.paymentStatus === 'pending' || p.paymentStatus2 === 'pending').length === 0 && (
+                          <div className="bg-slate-50 py-4 px-2 rounded-xl text-center border border-slate-100">
+                            <p className="text-[10px] font-bold text-slate-400 italic">Nenhuma compra a pagar.</p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Compras Pagas */}
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <h3 className="text-[10px] font-black text-success uppercase tracking-wider pl-1 flex items-center gap-1.5">
+                          <span className="w-2 h-2 rounded-full bg-success"></span>
+                          Pagas
+                        </h3>
+                        <span className="bg-success/10 text-success text-[9px] font-black px-2 py-0.5 rounded-full uppercase tracking-wider">
+                          {supplierPurchases.filter(p => p.paymentStatus !== 'pending' && p.paymentStatus2 !== 'pending').length}
+                        </span>
+                      </div>
+                      <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
+                        {supplierPurchases
+                          .filter(p => p.paymentStatus !== 'pending' && p.paymentStatus2 !== 'pending')
+                          .map((p) => {
+                            const isCurrentlySelected = selectedPurchaseId === p.id;
+                            const itemsCount = p.items?.reduce((acc, item) => acc + item.quantity, 0) || p.itemsCount || 0;
+                            const divisionResult = p.subtotal > 0 ? (p.total / p.subtotal) : 1;
+                            const percentageOverhead = (divisionResult - 1) * 100;
+                            return (
+                              <div
+                                key={p.id}
+                                className={cn(
+                                  "p-3 rounded-2xl border text-left flex flex-col justify-between gap-2 transition-all duration-200",
+                                  isCurrentlySelected
+                                    ? "bg-primary/5 border-primary shadow-sm"
+                                    : "bg-slate-50 border-slate-100 hover:bg-slate-100/80"
+                                )}
+                              >
+                                <div className="flex justify-between items-start min-w-0 gap-2">
+                                  <div className="min-w-0 flex-1">
+                                    <span className="text-[11px] font-black text-slate-800 uppercase tracking-tight">
+                                      #{p.id.slice(-6).toUpperCase()}
+                                    </span>
+                                    <p className="text-[9px] text-[#94A3B8] font-bold mt-0.5 truncate flex flex-wrap items-center gap-1">
+                                      <span>{new Date(p.timestamp).toLocaleDateString('pt-BR')}</span>
+                                      <span>•</span>
+                                      <span>{itemsCount} {itemsCount === 1 ? 'item' : 'itens'}</span>
+                                      {percentageOverhead > 0 && (
+                                        <>
+                                          <span>•</span>
+                                          <span className="text-accent font-extrabold">
+                                            +{percentageOverhead.toFixed(2)}% acrésc.
+                                          </span>
+                                        </>
+                                      )}
+                                    </p>
+                                  </div>
+                                  <span className="text-xs font-black text-slate-800 shrink-0 font-sans">
+                                    {formatCurrency(p.total)}
+                                  </span>
+                                </div>
+                                <div className="flex justify-between items-center mt-1">
+                                  <span className="text-[8px] font-black uppercase text-success bg-success/10 px-1.5 py-0.5 rounded-lg font-bold">
+                                    Pago
+                                  </span>
+                                  {isCurrentlySelected ? (
+                                    <div className="flex items-center gap-1 text-primary">
+                                      <CheckCircle2 className="w-3.5 h-3.5" />
+                                      <span className="text-[9px] font-black uppercase tracking-wider">Puxado</span>
+                                    </div>
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      onClick={() => handlePullPurchaseItems(p)}
+                                      className="px-2.5 py-1 bg-primary text-white text-[9px] font-black rounded-lg uppercase tracking-wider transition-all cursor-pointer shadow-sm hover:scale-105 active:scale-95"
+                                    >
+                                      Puxar Itens
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        {supplierPurchases.filter(p => p.paymentStatus !== 'pending' && p.paymentStatus2 !== 'pending').length === 0 && (
+                          <div className="bg-slate-50 py-4 px-2 rounded-xl text-center border border-slate-100">
+                            <p className="text-[10px] font-bold text-slate-400 italic">Nenhuma compra paga.</p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Product Quick-Add Card */}
             <div className="bg-white rounded-[32px] p-6 shadow-xl border border-gray-100/60 relative">
               <div className="flex items-center gap-2 mb-4 border-b border-slate-50 pb-3">
@@ -476,10 +734,19 @@ export default function LancarNota() {
                       </div>
                       <div className="overflow-y-auto flex-1 p-2 space-y-1">
                         {filteredProducts.length > 0 ? (
-                          filteredProducts.map((product) => (
+                          [...filteredProducts].sort((a, b) => {
+                            const aOut = (a.stock ?? 0) <= 0;
+                            const bOut = (b.stock ?? 0) <= 0;
+                            if (aOut && !bOut) return 1;
+                            if (!aOut && bOut) return -1;
+                            return 0;
+                          }).map((product) => (
                             <div
                               key={product.id}
-                              className="flex items-center justify-between gap-4 p-3 rounded-2xl transition-all group hover:bg-slate-50"
+                              className={cn(
+                                "flex items-center justify-between gap-4 p-3 rounded-2xl transition-all group hover:bg-slate-50",
+                                product.stock <= 0 && "opacity-50 grayscale"
+                              )}
                             >
                               <div className="flex items-center gap-4 min-w-0 flex-1">
                                 <div className="w-12 h-12 rounded-xl bg-slate-100 overflow-hidden flex-shrink-0 flex items-center justify-center">
@@ -666,6 +933,20 @@ export default function LancarNota() {
 
               {/* Total and submit */}
               <div className="p-6 bg-slate-50 border-t border-gray-100/60 flex flex-col space-y-4">
+                {purchaseOverhead > 0 && (
+                  <div className="flex justify-between items-center bg-white p-3.5 rounded-2xl border border-dashed border-accent hover:border-solid transition-all">
+                    <span className="text-[10px] uppercase font-black tracking-widest text-[#94A3B8]">
+                      Acréscimo no Custo da Compra
+                    </span>
+                    <span className="text-xs font-black text-accent bg-accent/5 px-2.5 py-1 rounded-lg">
+                      +{purchaseOverhead.toLocaleString("pt-BR", {
+                        minimumFractionDigits: 1,
+                        maximumFractionDigits: 4,
+                      })}%
+                    </span>
+                  </div>
+                )}
+
                 <div className="flex justify-between items-center bg-white p-3.5 rounded-2xl border border-slate-100">
                   <span className="text-[10px] uppercase font-black tracking-widest text-slate-400">
                     Total dos Produtos

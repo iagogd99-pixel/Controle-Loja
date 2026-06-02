@@ -15,7 +15,8 @@ import {
   Trash2,
   Edit2,
   Lock,
-  Pencil
+  Pencil,
+  ChevronDown
 } from 'lucide-react';
 import { 
   collection, 
@@ -46,6 +47,7 @@ import { Link } from 'react-router-dom';
 export default function PurchasesPending() {
   const { profile, isAdmin, verifyPassword } = useAuth();
   const [purchases, setPurchases] = useState<Purchase[]>([]);
+  const [activeTab, setActiveTab] = useState<string>('todos');
   const [loading, setLoading] = useState(true);
   const [selectedPurchase, setSelectedPurchase] = useState<Purchase | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
@@ -241,13 +243,147 @@ export default function PurchasesPending() {
     }
   };
 
-  const filteredPurchases = purchases.filter(p => {
-    const matchesSearch = p.id.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (p.supplierName || '').toLowerCase().includes(searchTerm.toLowerCase());
-    
-    // Additional filtering logic if needed (e.g. by supplier)
-    return matchesSearch;
+  interface PendingInstallmentItem {
+    purchase: Purchase;
+    installmentId?: number;
+    amount: number;
+    dueDate: Date;
+    status: 'pending' | 'paid';
+    totalInstallments: number;
+  }
+
+  const getParsedDate = (ts: any): Date => {
+    if (!ts) return new Date();
+    if (typeof ts.toDate === 'function') return ts.toDate();
+    return new Date(ts);
+  };
+
+  const pendingInstallmentItems: PendingInstallmentItem[] = [];
+
+  purchases.forEach((p) => {
+    if (p.installmentsList && p.installmentsList.length > 0) {
+      p.installmentsList.forEach((inst) => {
+        if (inst.status === 'pending') {
+          pendingInstallmentItems.push({
+            purchase: p,
+            installmentId: inst.id,
+            amount: inst.amount,
+            dueDate: new Date(inst.dueDate),
+            status: 'pending',
+            totalInstallments: p.installments || p.installmentsList.length,
+          });
+        }
+      });
+    } else {
+      // Single payment
+      const amount = (p.paymentStatus === 'pending' ? (p.splitAmount1 || p.total) : 0) + 
+                     (p.paymentStatus2 === 'pending' ? (p.splitAmount2 || 0) : 0);
+      if (amount > 0) {
+        pendingInstallmentItems.push({
+          purchase: p,
+          amount: amount,
+          dueDate: getParsedDate(p.timestamp),
+          status: 'pending',
+          totalInstallments: 1,
+        });
+      }
+    }
   });
+
+  const uniqueMonths = (Array.from(
+    new Set(
+      pendingInstallmentItems.map(item => format(item.dueDate, 'yyyy-MM'))
+    )
+  ) as string[]).sort((a, b) => a.localeCompare(b)); // Ascending order (closest first)
+
+  const formatMonthKey = (key: string) => {
+    const [year, month] = key.split('-').map(Number);
+    const date = new Date(year, month - 1, 1);
+    const formatted = format(date, "MMMM/yy", { locale: ptBR });
+    return formatted.charAt(0).toUpperCase() + formatted.slice(1);
+  };
+
+  const getPurchaseUnpaidAmount = (p: Purchase) => {
+    if (p.installmentsList && p.installmentsList.length > 0) {
+      return p.installmentsList.filter(i => i.status === 'pending').reduce((acc, i) => acc + i.amount, 0);
+    }
+    return (p.paymentStatus === 'pending' ? (p.splitAmount1 || p.total) : 0) + 
+           (p.paymentStatus2 === 'pending' ? (p.splitAmount2 || 0) : 0);
+  };
+
+  const filteredPurchases = purchases.filter(p => {
+    return p.id.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (p.supplierName || '').toLowerCase().includes(searchTerm.toLowerCase());
+  });
+
+  const groupPurchasesByDate = (purchasesList: Purchase[]) => {
+    const groups: { [key: string]: Purchase[] } = {};
+    purchasesList.forEach(p => {
+      const dateKey = getParsedDate(p.timestamp).toLocaleDateString('pt-BR');
+      if (!groups[dateKey]) {
+        groups[dateKey] = [];
+      }
+      groups[dateKey].push(p);
+    });
+    
+    return Object.keys(groups)
+      .sort((a, b) => {
+        const [dayA, monthA, yearA] = a.split('/').map(Number);
+        const [dayB, monthB, yearB] = b.split('/').map(Number);
+        const dateA = new Date(yearA, monthA - 1, dayA);
+        const dateB = new Date(yearB, monthB - 1, dayB);
+        return dateB.getTime() - dateA.getTime();
+      })
+      .map(dateKey => ({
+        dateKey,
+        items: groups[dateKey]
+      }));
+  };
+
+  const filteredInstallmentItems = pendingInstallmentItems.filter(item => {
+    const p = item.purchase;
+    return p.id.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (p.supplierName || '').toLowerCase().includes(searchTerm.toLowerCase());
+  });
+
+  const getTabTotal = (tabKey: string) => {
+    const targetItems = filteredInstallmentItems.filter(item => {
+      if (tabKey === 'todos') return true;
+      const key = format(item.dueDate, 'yyyy-MM');
+      return key === tabKey;
+    });
+    return targetItems.reduce((acc, item) => acc + item.amount, 0);
+  };
+
+  const installmentsInActiveTab = filteredInstallmentItems.filter(item => {
+    if (activeTab === 'todos') return true;
+    const key = format(item.dueDate, 'yyyy-MM');
+    return key === activeTab;
+  });
+
+  const groupInstallmentsByDate = (itemsList: PendingInstallmentItem[]) => {
+    const groups: { [key: string]: PendingInstallmentItem[] } = {};
+    itemsList.forEach(item => {
+      const dateKey = item.dueDate.toLocaleDateString('pt-BR');
+      if (!groups[dateKey]) {
+        groups[dateKey] = [];
+      }
+      groups[dateKey].push(item);
+    });
+    
+    return Object.keys(groups)
+      .sort((a, b) => {
+        const [dayA, monthA, yearA] = a.split('/').map(Number);
+        const [dayB, monthB, yearB] = b.split('/').map(Number);
+        const dateA = new Date(yearA, monthA - 1, dayA);
+        const dateB = new Date(yearB, monthB - 1, dayB);
+        return dateB.getTime() - dateA.getTime();
+      })
+      .map(dateKey => ({
+        dateKey,
+        items: groups[dateKey]
+      }));
+  };
 
   return (
     <div className="space-y-4">
@@ -261,122 +397,233 @@ export default function PurchasesPending() {
             <p className="text-[10px] text-slate-400 font-bold tracking-widest uppercase leading-none mt-1">Notas de Entrada Pendentes</p>
           </div>
         </div>
-        
-        <div className="bg-danger/10 px-4 py-2 rounded-xl border border-danger/20 flex items-center gap-2">
-           <AlertCircle className="w-4 h-4 text-danger" />
-           <p className="text-[10px] font-black text-danger uppercase">Total a Pagar: {formatCurrency(purchases.reduce((acc, p) => {
-             const amt = (p.paymentStatus === 'pending' ? (p.splitAmount1 || p.total) : 0) + (p.paymentStatus2 === 'pending' ? (p.splitAmount2 || 0) : 0);
-             return acc + amt;
-           }, 0))}</p>
+      </div>
+
+      {/* Metrics Row */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 px-2">
+        {/* Total Geral Card */}
+        <div className="bg-slate-50 dark:bg-slate-900 border border-slate-100 dark:border-slate-800 p-4 rounded-3xl flex items-center justify-between shadow-sm">
+          <div className="space-y-1">
+            <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Total Geral a Pagar</span>
+            <p className="text-xl font-black text-slate-950 dark:text-white leading-none mt-1">
+              {formatCurrency(pendingInstallmentItems.reduce((acc, i) => acc + i.amount, 0))}
+            </p>
+          </div>
+          <div className="w-10 h-10 bg-slate-100 dark:bg-slate-800 rounded-xl flex items-center justify-center text-slate-500">
+            <Clock className="w-5 h-5" />
+          </div>
+        </div>
+
+        {/* Selected Month Total Card */}
+        <div className="bg-danger/5 dark:bg-danger/10 border border-danger/10 p-4 rounded-3xl flex items-center justify-between shadow-sm">
+          <div className="space-y-1">
+            <span className="text-[10px] font-black text-danger uppercase tracking-widest">
+              {activeTab === 'todos' ? 'Total de Todos os Meses' : `Total de ${formatMonthKey(activeTab)}`}
+            </span>
+            <p className="text-xl font-black text-danger leading-none mt-1">
+              {formatCurrency(getTabTotal(activeTab))}
+            </p>
+          </div>
+          <div className="w-10 h-10 bg-danger/10 rounded-xl flex items-center justify-center text-danger">
+            <AlertCircle className="w-5 h-5" />
+          </div>
         </div>
       </div>
 
-      <div className="relative px-2">
-        <Search className="absolute left-6 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-        <input 
-          type="text"
-          placeholder="Buscar compra pendente..."
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
-          className="w-full pl-11 pr-4 py-3 bg-white border border-gray-100 rounded-2xl shadow-sm outline-none focus:ring-2 focus:ring-danger/20 transition-all text-xs"
-        />
+      {/* Search and Filters Row */}
+      <div className="flex flex-col sm:flex-row gap-2 px-2">
+        <div className="relative flex-1">
+          <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+          <input 
+            type="text"
+            placeholder="Buscar compra pendente..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="w-full pl-11 pr-4 py-3 bg-white dark:bg-slate-900 border border-gray-100 dark:border-slate-800 rounded-2xl shadow-sm outline-none focus:ring-2 focus:ring-danger/20 transition-all text-xs"
+          />
+        </div>
+        <div className="w-full sm:w-64 relative">
+          <Calendar className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+          <select
+            value={activeTab}
+            onChange={(e) => setActiveTab(e.target.value)}
+            className="w-full pl-11 pr-10 py-3 bg-white dark:bg-slate-900 border border-gray-100 dark:border-slate-800 rounded-2xl shadow-sm outline-none focus:ring-2 focus:ring-danger/20 transition-all text-xs appearance-none cursor-pointer text-slate-700 dark:text-slate-300 font-semibold"
+          >
+            <option value="todos">Todos os meses ({formatCurrency(getTabTotal('todos'))})</option>
+            {uniqueMonths.map((monthKey) => (
+              <option key={monthKey} value={monthKey}>
+                {formatMonthKey(monthKey)} ({formatCurrency(getTabTotal(monthKey))})
+              </option>
+            ))}
+          </select>
+          <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400">
+            <ChevronDown className="w-4 h-4" />
+          </div>
+        </div>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 px-2">
-        {filteredPurchases.map((purchase) => {
-          const date = purchase.timestamp instanceof Timestamp ? purchase.timestamp.toDate() : new Date(purchase.timestamp);
-          return (
-            <motion.div
-              key={purchase.id}
-              layoutId={`purchase-${purchase.id}`}
-              onClick={() => setSelectedPurchase(purchase)}
-              className="bg-white p-4 rounded-[28px] border border-slate-100 shadow-sm hover:shadow-md transition-all text-left flex flex-col group relative cursor-pointer"
-            >
-              <div className="flex items-center justify-between mb-3">
-                <div className="w-10 h-10 bg-slate-50 rounded-xl flex items-center justify-center text-slate-300 group-hover:bg-danger/5 group-hover:text-danger transition-colors">
-                  <Truck className="w-5 h-5" />
-                </div>
-                <div className="flex flex-col items-end">
-                   <span className="text-[8px] font-black bg-danger/10 text-danger px-2 py-0.5 rounded-lg uppercase tracking-wider mb-1">
-                    A Pagar
-                  </span>
-                  <span className="text-[8px] font-black text-slate-300 uppercase tracking-widest leading-none">
-                    #{purchase.id.slice(-6).toUpperCase()}
-                  </span>
-                </div>
-              </div>
-              
-              <div className="flex-1 min-w-0">
-                <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1 leading-none">
-                   {format(date, "dd MMM yyyy", { locale: ptBR })}
-                </p>
-                <h3 className="text-sm font-black text-slate-800 line-clamp-1 group-hover:text-primary transition-colors uppercase">
-                  {purchase.supplierName || 'Fornecedor Avulso'}
-                </h3>
+      <div className="space-y-8 px-2">
+        {activeTab === 'todos' ? (
+          groupPurchasesByDate(filteredPurchases).map(({ dateKey, items }) => (
+            <div key={dateKey} className="space-y-3 break-before-page print:break-before-page">
+              <div className="flex items-center gap-4 my-2">
+                <span className="text-[10px] font-black text-slate-400 bg-slate-50 px-3 py-1 rounded-full uppercase tracking-widest border border-slate-100 flex items-center gap-1.5 shadow-sm">
+                  <Calendar className="w-3.5 h-3.5 text-slate-400" />
+                  {dateKey}
+                </span>
+                <div className="h-px bg-slate-100 flex-1" />
               </div>
 
-              <div className="pt-3 border-t border-slate-50 mt-3 flex justify-between items-end">
-                <div className="flex flex-col">
-                  <span className="text-[8px] font-black text-slate-300 uppercase tracking-widest mb-1 leading-none">Pendente</span>
-                  <span className="text-base font-black text-danger leading-none">
-                    {formatCurrency(
-                      (purchase.paymentStatus === 'pending' ? (purchase.splitAmount1 || purchase.total) : 0) + 
-                      (purchase.paymentStatus2 === 'pending' ? (purchase.splitAmount2 || 0) : 0)
-                    )}
-                  </span>
-                </div>
-                <div className="text-right flex flex-col items-end">
-                  <span className="text-[8px] font-black text-slate-300 uppercase tracking-widest leading-none mb-1">
-                    {purchase.isSplitPayment ? (
-                      <>
-                        {purchase.paymentStatus === 'pending' && purchase.paymentMethod}
-                        {purchase.paymentStatus === 'pending' && purchase.paymentStatus2 === 'pending' && ' + '}
-                        {purchase.paymentStatus2 === 'pending' && purchase.paymentMethod2}
-                      </>
-                    ) : purchase.paymentMethod}
-                  </span>
-                  <span className="text-[8px] font-black text-slate-300 uppercase tracking-widest leading-none">{purchase.itemsCount} PRODS</span>
-                </div>
+              <div className="grid grid-cols-2 xs:grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
+                {items.map((purchase) => {
+                  const date = getParsedDate(purchase.timestamp);
+                  const unpaidAmt = getPurchaseUnpaidAmount(purchase);
+                  return (
+                    <motion.div
+                      key={purchase.id}
+                      layoutId={`purchase-${purchase.id}`}
+                      onClick={() => setSelectedPurchase(purchase)}
+                      className="bg-white p-3 rounded-2xl border border-gray-100 shadow-sm hover:shadow-md transition-all text-left flex flex-col group relative cursor-pointer"
+                    >
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="p-2 bg-slate-50 rounded-xl group-hover:bg-danger/10 transition-colors flex-shrink-0">
+                          <Truck className="w-4 h-4 text-slate-400 group-hover:text-danger" />
+                        </div>
+                        <div className="flex items-center gap-1 min-w-0">
+                          <div className="px-2 py-0.5 rounded text-[8px] font-black bg-danger/10 text-danger uppercase tracking-tighter truncate">
+                            A Pagar
+                          </div>
+                          <button
+                            type="button"
+                            onMouseDown={(e) => e.stopPropagation()}
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              handleDelete(purchase);
+                            }}
+                            className="w-10 h-10 flex items-center justify-center text-slate-400 hover:text-danger hover:bg-danger/10 rounded-lg transition-all flex-shrink-0"
+                          >
+                            <Trash2 className="w-5 h-5" />
+                          </button>
+                        </div>
+                      </div>
+                      
+                      <div className="mt-auto">
+                        <p className="text-[10px] font-black text-slate-800 leading-tight uppercase tracking-tight">
+                          {date.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })}
+                        </p>
+                        <h3 className="text-[14px] font-black text-slate-900 mt-0.5 uppercase truncate">
+                          {purchase.supplierName || 'Fornecedor Avulso'}
+                        </h3>
+                        <div className="flex items-center justify-between mt-2 pt-2 border-t border-slate-50">
+                          <span className="text-[10px] font-black text-danger">
+                            {formatCurrency(unpaidAmt)}
+                          </span>
+                          <span className="text-[8px] font-bold text-slate-400 uppercase truncate">
+                            {purchase.isSplitPayment ? (
+                              <>
+                                {purchase.paymentStatus === 'pending' && purchase.paymentMethod}
+                                {purchase.paymentStatus === 'pending' && purchase.paymentStatus2 === 'pending' && ' + '}
+                                {purchase.paymentStatus2 === 'pending' && purchase.paymentMethod2}
+                              </>
+                            ) : purchase.paymentMethod}
+                          </span>
+                        </div>
+                      </div>
+                    </motion.div>
+                  );
+                })}
+              </div>
+            </div>
+          ))
+        ) : (
+          groupInstallmentsByDate(installmentsInActiveTab).map(({ dateKey, items }) => (
+            <div key={dateKey} className="space-y-3 break-before-page print:break-before-page">
+              <div className="flex items-center gap-4 my-2">
+                <span className="text-[10px] font-black text-slate-400 bg-slate-50 px-3 py-1 rounded-full uppercase tracking-widest border border-slate-100 flex items-center gap-1.5 shadow-sm">
+                  <Calendar className="w-3.5 h-3.5 text-slate-400" />
+                  {dateKey}
+                </span>
+                <div className="h-px bg-slate-100 flex-1" />
               </div>
 
-              <div className="flex gap-2 mt-4">
-                <button 
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleFinalize(purchase);
-                  }}
-                  className="flex-1 py-3 bg-danger text-white text-[9px] font-black rounded-xl shadow-lg shadow-danger/20 transition-all uppercase tracking-widest hover:brightness-110 active:scale-95"
-                >
-                  Confirmar Pagamento
-                </button>
-                <Link 
-                  to={`/compras/nova?edit=${purchase.id}`}
-                  onClick={(e) => e.stopPropagation()}
-                  className="w-10 h-10 flex items-center justify-center bg-slate-50 text-slate-400 rounded-xl hover:bg-accent/10 hover:text-accent transition-all"
-                >
-                  <Pencil className="w-4 h-4" />
-                </Link>
-                <button 
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleDelete(purchase);
-                  }}
-                  className="w-10 h-10 flex items-center justify-center bg-slate-50 text-slate-400 rounded-xl hover:bg-danger/10 hover:text-danger transition-all"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
+              <div className="grid grid-cols-2 xs:grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
+                {items.map((item) => {
+                  const purchase = item.purchase;
+                  const date = item.dueDate;
+                  return (
+                    <motion.div
+                      key={`${purchase.id}-${item.installmentId || 'single'}`}
+                      layoutId={`installment-${purchase.id}-${item.installmentId || 'single'}`}
+                      onClick={() => setSelectedPurchase(purchase)}
+                      className="bg-white p-3 rounded-2xl border border-gray-100 shadow-sm hover:shadow-md transition-all text-left flex flex-col group relative cursor-pointer"
+                    >
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="p-2 bg-slate-50 rounded-xl group-hover:bg-danger/10 transition-colors flex-shrink-0">
+                          <Truck className="w-4 h-4 text-slate-400 group-hover:text-danger" />
+                        </div>
+                        <div className="flex items-center gap-1 min-w-0">
+                          <div className="px-2 py-0.5 rounded text-[8px] font-black bg-danger/10 text-danger uppercase tracking-tighter truncate">
+                            {item.installmentId ? `Parc. ${item.installmentId}/${item.totalInstallments}` : 'Única'}
+                          </div>
+                          <button
+                            type="button"
+                            onMouseDown={(e) => e.stopPropagation()}
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              handleDelete(purchase);
+                            }}
+                            className="w-10 h-10 flex items-center justify-center text-slate-400 hover:text-danger hover:bg-danger/10 rounded-lg transition-all flex-shrink-0"
+                          >
+                            <Trash2 className="w-5 h-5" />
+                          </button>
+                        </div>
+                      </div>
+                      
+                      <div className="mt-auto">
+                        <p className="text-[10px] font-black text-slate-800 leading-tight uppercase tracking-tight">
+                          {date.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })}
+                        </p>
+                        <h3 className="text-[14px] font-black text-slate-900 mt-0.5 uppercase truncate">
+                          {purchase.supplierName || 'Fornecedor Avulso'}
+                        </h3>
+                        <div className="flex items-center justify-between mt-2 pt-2 border-t border-slate-50">
+                          <span className="text-[10px] font-black text-danger">
+                            {formatCurrency(item.amount)}
+                          </span>
+                          <span className="text-[8px] font-bold text-slate-400 uppercase truncate">
+                            {purchase.isSplitPayment ? (
+                              <>
+                                {purchase.paymentStatus === 'pending' && purchase.paymentMethod}
+                                {purchase.paymentStatus === 'pending' && purchase.paymentStatus2 === 'pending' && ' + '}
+                                {purchase.paymentStatus2 === 'pending' && purchase.paymentMethod2}
+                              </>
+                            ) : purchase.paymentMethod}
+                          </span>
+                        </div>
+                      </div>
+                    </motion.div>
+                  );
+                })}
               </div>
-            </motion.div>
-          );
-        })}
+            </div>
+          ))
+        )}
       </div>
 
-      {filteredPurchases.length === 0 && !loading && (
+      {((activeTab === 'todos' ? filteredPurchases.length : installmentsInActiveTab.length) === 0) && !loading && (
         <div className="py-20 text-center px-4">
           <div className="bg-white p-8 rounded-[40px] border border-dashed border-slate-200 inline-block w-full max-w-sm">
             <CheckCircle2 className="w-12 h-12 text-success mx-auto mb-4 opacity-20" />
-            <h3 className="text-sm font-bold text-slate-400 uppercase">Tudo em dia!</h3>
-            <p className="text-[10px] text-slate-300 font-black tracking-widest mt-1">Nenhuma compra pendente de pagamento</p>
+            <h3 className="text-sm font-bold text-slate-400 uppercase">
+              {purchases.length === 0 ? "Tudo em dia!" : "Nenhum resultado"}
+            </h3>
+            <p className="text-[10px] text-slate-300 font-black tracking-widest mt-1">
+              {purchases.length === 0 
+                ? "Nenhuma compra pendente de pagamento" 
+                : "Nenhuma compra pendente para este mês ou busca"}
+            </p>
           </div>
         </div>
       )}

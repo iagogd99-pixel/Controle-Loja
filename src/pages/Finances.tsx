@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Wallet, 
   ArrowUpRight, 
@@ -19,7 +19,8 @@ import {
   Trash2,
   X,
   Lock,
-  CheckCircle2
+  CheckCircle2,
+  ChevronDown
 } from 'lucide-react';
 import { 
   collection, 
@@ -41,8 +42,8 @@ import { db, auth } from '@/src/lib/firebase';
 import { useAuth } from '@/src/contexts/AuthContext';
 import { cn, formatCurrency, getBrasiliaISO, getBrasiliaTime } from '@/src/lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
-import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
+import { toZonedTime, format } from 'date-fns-tz';
 
 enum OperationType {
   CREATE = 'create',
@@ -112,6 +113,7 @@ interface Movement {
   userId: string;
   userName: string;
   saleId?: string;
+  installmentId?: number;
   timestamp: any;
 }
 
@@ -123,6 +125,46 @@ export default function Finances() {
   const [pendingPurchases, setPendingPurchases] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'current' | 'future'>('current');
+  const [selectedFutureMonth, setSelectedFutureMonth] = useState<string>('todos');
+  
+  // Auto-close states
+  const [autoClosingAmountReal, setAutoClosingAmountReal] = useState('');
+  const [autoClosingNote, setAutoClosingNote] = useState('');
+
+  const expired = useMemo(() => {
+    if (!activeSession || activeSession.status !== 'open') return false;
+    try {
+      const openedAtDate = activeSession.openedAt instanceof Timestamp 
+        ? activeSession.openedAt.toDate() 
+        : new Date(activeSession.openedAt);
+      
+      const openedAtZoned = toZonedTime(openedAtDate, 'America/Sao_Paulo');
+      const currentZoned = getBrasiliaTime();
+      
+      const openedDay2359 = new Date(openedAtZoned);
+      openedDay2359.setHours(23, 59, 0, 0);
+      
+      return currentZoned.getTime() >= openedDay2359.getTime();
+    } catch (e) {
+      console.error(e);
+      return false;
+    }
+  }, [activeSession]);
+
+  useEffect(() => {
+    if (!activeSession || expired) {
+      setActiveTab('current');
+    }
+  }, [activeSession, expired]);
+
+  useEffect(() => {
+    if (expired && activeSession) {
+      const totalInflows = movements.filter(m => m.type === 'in').reduce((sum, m) => sum + m.amount, 0);
+      const totalOutflows = movements.filter(m => m.type === 'out').reduce((sum, m) => sum + m.amount, 0);
+      const expectedBalance = activeSession.openingBalance + totalInflows - totalOutflows;
+      setAutoClosingAmountReal(expectedBalance.toFixed(2));
+    }
+  }, [expired, activeSession, movements]);
   
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [submittingStats, setSubmittingStats] = useState(false);
@@ -224,7 +266,26 @@ export default function Finances() {
         id: doc_.id,
         ...doc_.data()
       })) as Movement[];
-      setMovements(docs);
+
+      const isExcludedCardPurchase = (m: Movement) => {
+        if (m.type === 'out' && m.category === 'compra') {
+          const pm = (m.paymentMethod || '').toLowerCase();
+          const isCard = pm.includes('cartão') || pm.includes('cartao') || pm.includes('crédito') || pm.includes('credito') || pm.includes('débito') || pm.includes('debito') || pm.includes('card');
+          if (isCard) {
+            const isInstallmentOrQuitacao = m.installmentId !== undefined || 
+                                            (m.reason || '').toLowerCase().includes('parcela') || 
+                                            (m.reason || '').toLowerCase().includes('quitação') || 
+                                            (m.reason || '').toLowerCase().includes('quitando') ||
+                                            (m.reason || '').toLowerCase().includes('pgto parcela') ||
+                                            (m.reason || '').toLowerCase().includes('vencimento');
+            return !isInstallmentOrQuitacao;
+          }
+        }
+        return false;
+      };
+
+      const filteredDocs = docs.filter(m => !isExcludedCardPurchase(m));
+      setMovements(filteredDocs);
 
       let salesSum = 0;
       let withSum = 0;
@@ -237,7 +298,7 @@ export default function Finances() {
       let cardOut = 0;
       let purchaseSum = 0;
 
-      docs.forEach(m => {
+      filteredDocs.forEach(m => {
         if (m.type === 'in') {
            if (m.category === 'venda') salesSum += m.amount;
            if (m.category === 'suprimento') supSum += m.amount;
@@ -441,6 +502,126 @@ export default function Finances() {
     }
   };
 
+  // Dynamically extract and order available future months
+  const availableMonths = useMemo(() => {
+    const monthsSet = new Set<string>();
+    
+    pendingSales.forEach(s => {
+      if (s.timestamp) {
+        try {
+          const date = new Date(s.timestamp);
+          if (!isNaN(date.getTime())) {
+            const yyyy = date.getFullYear();
+            const mm = String(date.getMonth() + 1).padStart(2, '0');
+            monthsSet.add(`${yyyy}-${mm}`);
+          }
+        } catch (e) {}
+      }
+    });
+
+    pendingPurchases.forEach(p => {
+      if (p.timestamp) {
+        try {
+          const date = new Date(p.timestamp);
+          if (!isNaN(date.getTime())) {
+            const yyyy = date.getFullYear();
+            const mm = String(date.getMonth() + 1).padStart(2, '0');
+            monthsSet.add(`${yyyy}-${mm}`);
+          }
+        } catch (e) {}
+      }
+      if (p.installmentsList) {
+        p.installmentsList.forEach((inst: any) => {
+          if (inst.status === 'pending' && inst.dueDate) {
+            try {
+              const date = new Date(inst.dueDate);
+              if (!isNaN(date.getTime())) {
+                const yyyy = date.getFullYear();
+                const mm = String(date.getMonth() + 1).padStart(2, '0');
+                monthsSet.add(`${yyyy}-${mm}`);
+              }
+            } catch (e) {}
+          }
+        });
+      }
+    });
+
+    return Array.from(monthsSet).sort();
+  }, [pendingSales, pendingPurchases]);
+
+  const formatMonthOption = (key: string) => {
+    try {
+      const [year, month] = key.split('-').map(Number);
+      const date = new Date(year, month - 1, 1);
+      const formatted = format(date, 'MMMM yyyy', { timeZone: 'America/Sao_Paulo', locale: ptBR });
+      return formatted.charAt(0).toUpperCase() + formatted.slice(1);
+    } catch (e) {
+      return key;
+    }
+  };
+
+  const getSalePendingAmount = (s: any, month: string) => {
+    if (month === 'todos') {
+      return (s.paymentStatus === 'pending' ? (s.splitAmount1 || s.total) : 0) + 
+             (s.paymentStatus2 === 'pending' ? (s.splitAmount2 || 0) : 0);
+    }
+    if (!s.timestamp) return 0;
+    const date = new Date(s.timestamp);
+    const yyyy = date.getFullYear();
+    const mm = String(date.getMonth() + 1).padStart(2, '0');
+    if (`${yyyy}-${mm}` === month) {
+      return (s.paymentStatus === 'pending' ? (s.splitAmount1 || s.total) : 0) + 
+             (s.paymentStatus2 === 'pending' ? (s.splitAmount2 || 0) : 0);
+    }
+    return 0;
+  };
+
+  const getPurchasePendingAmount = (p: any, month: string) => {
+    if (month === 'todos') {
+      if (p.installmentsList && p.installmentsList.length > 0) {
+        return p.installmentsList.filter((i: any) => i.status === 'pending').reduce((acc: number, i: any) => acc + i.amount, 0);
+      }
+      return (p.paymentStatus === 'pending' ? (p.splitAmount1 || p.total) : 0) + 
+             (p.paymentStatus2 === 'pending' ? (p.splitAmount2 || 0) : 0);
+    }
+    
+    let total = 0;
+    if (p.installmentsList && p.installmentsList.length > 0) {
+      p.installmentsList.forEach((inst: any) => {
+        if (inst.status === 'pending' && inst.dueDate) {
+          const date = new Date(inst.dueDate);
+          const yyyy = date.getFullYear();
+          const mm = String(date.getMonth() + 1).padStart(2, '0');
+          if (`${yyyy}-${mm}` === month) {
+            total += inst.amount;
+          }
+        }
+      });
+      return total;
+    }
+
+    if (!p.timestamp) return 0;
+    const date = new Date(p.timestamp);
+    const yyyy = date.getFullYear();
+    const mm = String(date.getMonth() + 1).padStart(2, '0');
+    if (`${yyyy}-${mm}` === month) {
+      return (p.paymentStatus === 'pending' ? (p.splitAmount1 || p.total) : 0) + 
+             (p.paymentStatus2 === 'pending' ? (p.splitAmount2 || 0) : 0);
+    }
+
+    return 0;
+  };
+
+  const filteredSales = useMemo(() => {
+    if (selectedFutureMonth === 'todos') return pendingSales;
+    return pendingSales.filter(s => getSalePendingAmount(s, selectedFutureMonth) > 0);
+  }, [pendingSales, selectedFutureMonth]);
+
+  const filteredPurchases = useMemo(() => {
+    if (selectedFutureMonth === 'todos') return pendingPurchases;
+    return pendingPurchases.filter(p => getPurchasePendingAmount(p, selectedFutureMonth) > 0);
+  }, [pendingPurchases, selectedFutureMonth]);
+
   if (loading) {
     return (
       <div className="flex h-64 items-center justify-center">
@@ -491,34 +672,134 @@ export default function Finances() {
       </header>
 
       <div className="space-y-6">
-        <div className="flex items-center p-1 bg-slate-100 rounded-2xl mx-1">
-          <button 
-            onClick={() => setActiveTab('current')}
-            className={cn(
-              "flex-1 py-3 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all",
-              activeTab === 'current' ? "bg-white text-primary shadow-sm" : "text-slate-500"
-            )}
-          >
-            Caixa Atual
-          </button>
-          <button 
-            onClick={() => setActiveTab('future')}
-            className={cn(
-              "flex-1 py-3 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all",
-              activeTab === 'future' ? "bg-white text-primary shadow-sm" : "text-slate-500"
-            )}
-          >
-            Movimentações Futuras
-          </button>
-        </div>
+        {activeSession && !expired && (
+          <div className="flex items-center p-1 bg-slate-100 rounded-2xl mx-1">
+            <button 
+              onClick={() => setActiveTab('current')}
+              className={cn(
+                "flex-1 py-3 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all",
+                activeTab === 'current' ? "bg-white text-primary shadow-sm" : "text-slate-500"
+              )}
+            >
+              Caixa Atual
+            </button>
+            <button 
+              onClick={() => setActiveTab('future')}
+              className={cn(
+                "flex-1 py-3 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all",
+                activeTab === 'future' ? "bg-white text-primary shadow-sm" : "text-slate-500"
+              )}
+            >
+              Movimentações Futuras
+            </button>
+          </div>
+        )}
 
-        {activeTab === 'current' ? (
+        {expired ? (
+          <motion.div 
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="bg-white p-8 rounded-[20px] border border-gray-100 shadow-xl flex flex-col items-center text-center space-y-6 mx-1"
+          >
+            <div className="w-16 h-16 bg-amber-50 rounded-full flex items-center justify-center text-amber-500 mx-auto">
+              <AlertCircle className="w-8 h-8" />
+            </div>
+            <div>
+              <h2 className="text-xl font-black text-primary uppercase leading-tight">Encerramento Necessário</h2>
+              <p className="text-slate-400 text-xs font-bold leading-relaxed mt-2 px-2">
+                O caixa iniciado em <span className="text-slate-700 font-extrabold">{activeSession && format(activeSession.openedAt instanceof Timestamp ? activeSession.openedAt.toDate() : new Date(activeSession.openedAt), "dd/MM/yyyy 'às' HH:mm", { timeZone: 'America/Sao_Paulo', locale: ptBR })}</span> expirou às 23:59.
+              </p>
+              <p className="text-slate-400 text-xs font-bold leading-relaxed mt-1 px-2">
+                Para prosseguir para o novo caixa de hoje, você deve fechar o caixa do dia anterior informando o saldo final.
+              </p>
+            </div>
+
+            <div className="w-full bg-slate-50 rounded-2xl p-5 text-left space-y-2.5 border border-slate-100">
+              <div className="flex justify-between text-xs font-bold text-slate-500">
+                <span>Saldo Inicial:</span>
+                <span className="text-slate-700 font-black">{activeSession && formatCurrency(activeSession.openingBalance)}</span>
+              </div>
+              <div className="flex justify-between text-xs font-bold text-slate-500">
+                <span>Total de Entradas:</span>
+                <span className="text-teal-600 font-black">+{formatCurrency(totalInflows)}</span>
+              </div>
+              <div className="flex justify-between text-xs font-bold text-slate-500">
+                <span>Total de Saídas:</span>
+                <span className="text-rose-600 font-black">-{formatCurrency(totalOutflows)}</span>
+              </div>
+              <div className="border-t border-slate-200 mt-2.5 pt-2.5 flex justify-between text-xs font-black text-slate-800">
+                <span>Saldo Esperado:</span>
+                <span>{formatCurrency(saldoAtual)}</span>
+              </div>
+            </div>
+
+            <form onSubmit={async (e) => {
+              e.preventDefault();
+              if (!activeSession || submitting) return;
+              
+              const expectedBalance = activeSession.openingBalance + totalInflows - totalOutflows;
+              const realBalance = autoClosingAmountReal !== '' ? Number(autoClosingAmountReal) : expectedBalance;
+              const difference = realBalance - expectedBalance;
+
+              try {
+                setSubmitting(true);
+                await updateDoc(doc(db, 'cash_sessions', activeSession.id), {
+                  status: 'closed',
+                  closingBalance: expectedBalance,
+                  closingBalanceReal: realBalance,
+                  closingDifference: difference,
+                  closingNote: autoClosingNote || "Fechamento automático em 23:59 (GMT-3)",
+                  closedAt: serverTimestamp(),
+                  closedBy: profile?.uid || 'system',
+                  closedByName: profile?.name || 'Sistema'
+                });
+                setAutoClosingAmountReal('');
+                setAutoClosingNote('');
+              } catch (error) {
+                handleFirestoreError(error, OperationType.UPDATE, `cash_sessions/${activeSession.id}`);
+              } finally {
+                setSubmitting(false);
+              }
+            }} className="w-full space-y-4 text-left">
+              <div className="space-y-1">
+                <label className="text-[10px] font-black text-slate-400 uppercase ml-2">Valor Real no Caixa (R$)</label>
+                <input 
+                  type="number"
+                  step="0.01"
+                  required
+                  value={autoClosingAmountReal}
+                  onChange={(e) => setAutoClosingAmountReal(e.target.value)}
+                  placeholder={saldoAtual.toFixed(2)}
+                  className="w-full h-14 bg-slate-50 border-2 border-transparent focus:border-amber-500/20 rounded-xl px-6 font-black text-slate-800 transition-all outline-none"
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-[10px] font-black text-slate-400 uppercase ml-2">Observação (Opcional)</label>
+                <textarea 
+                  rows={2}
+                  value={autoClosingNote}
+                  onChange={(e) => setAutoClosingNote(e.target.value)}
+                  className="w-full bg-slate-50 border-2 border-transparent focus:border-slate-200 rounded-xl p-4 font-bold text-slate-600 transition-all outline-none resize-none text-sm"
+                  placeholder="Observação do encerramento automático"
+                />
+              </div>
+              <button 
+                type="submit"
+                disabled={submitting || !autoClosingAmountReal}
+                className="w-full h-14 bg-amber-500 hover:bg-amber-600 text-white font-black rounded-xl shadow-xl shadow-amber-500/20 flex items-center justify-center gap-2 disabled:opacity-50 uppercase text-xs transition-all cursor-pointer"
+              >
+                {submitting ? <Loader2 className="w-5 h-5 animate-spin" /> : <CheckCircle2 className="w-5 h-5" />}
+                Confirmar Fechamento e Prosseguir
+              </button>
+            </form>
+          </motion.div>
+        ) : activeTab === 'current' ? (
           <div className="space-y-4">
             {activeSession && (
               <div className="mt-1 px-2">
                 <p className="text-slate-400 text-xs font-bold">Aberto desde</p>
                 <p className="text-slate-500 text-xs font-black">
-                  {format(activeSession.openedAt instanceof Timestamp ? activeSession.openedAt.toDate() : new Date(activeSession.openedAt), "dd/MM/yyyy, HH:mm:ss", { locale: ptBR })}
+                  {format(activeSession.openedAt instanceof Timestamp ? activeSession.openedAt.toDate() : new Date(activeSession.openedAt), "dd/MM/yyyy, HH:mm:ss", { timeZone: 'America/Sao_Paulo', locale: ptBR })}
                 </p>
               </div>
             )}
@@ -696,7 +977,7 @@ export default function Finances() {
                               )}
                             </div>
                             <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-0.5">
-                              {m.category || (m.type === 'in' ? 'entrada' : 'saída')} · {format(date, "dd/MM/yyyy, HH:mm:ss")}
+                              {m.category || (m.type === 'in' ? 'entrada' : 'saída')} · {format(date, "dd/MM/yyyy, HH:mm:ss", { timeZone: 'America/Sao_Paulo' })}
                             </p>
                           </div>
                           <div className="flex items-center gap-4">
@@ -738,9 +1019,34 @@ export default function Finances() {
           </div>
         ) : (
           <div className="space-y-6 px-1">
+            {/* Month Filter Selector */}
+            <div className="bg-white p-4 rounded-3xl border border-gray-100 shadow-sm flex items-center justify-between gap-4">
+              <div className="flex items-center gap-2">
+                <Calendar className="w-5 h-5 text-accent" />
+                <span className="text-xs font-black text-slate-800 uppercase tracking-tight">Mês de Referência</span>
+              </div>
+              <div className="relative">
+                <select
+                  value={selectedFutureMonth}
+                  onChange={(e) => setSelectedFutureMonth(e.target.value)}
+                  className="appearance-none bg-slate-50 border border-slate-200/60 rounded-2xl px-5 py-2.5 pr-10 text-xs font-black text-slate-700 outline-none focus:border-accent hover:bg-slate-100/55 transition-all text-right cursor-pointer"
+                >
+                  <option value="todos">Todos os Meses</option>
+                  {availableMonths.map((m) => (
+                    <option key={m} value={m}>
+                      {formatMonthOption(m)}
+                    </option>
+                  ))}
+                </select>
+                <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400">
+                  <ChevronDown className="w-3.5 h-3.5" />
+                </div>
+              </div>
+            </div>
+
             <div className="grid grid-cols-2 gap-4">
-              <StatBox label="A Receber (Vendas)" value={pendingSales.reduce((acc, s) => acc + (s.paymentStatus === 'pending' ? (s.splitAmount1 || s.total) : 0) + (s.paymentStatus2 === 'pending' ? (s.splitAmount2 || 0) : 0), 0)} icon={ArrowUpRight} iconColor="text-teal-500" smaller />
-              <StatBox label="A Pagar (Compras)" value={pendingPurchases.reduce((acc, p) => acc + (p.paymentStatus === 'pending' ? (p.splitAmount1 || p.total) : 0) + (p.paymentStatus2 === 'pending' ? (p.splitAmount2 || 0) : 0), 0)} icon={Minus} iconColor="text-rose-500" smaller />
+              <StatBox label="A Receber (Vendas)" value={filteredSales.reduce((acc, s) => acc + getSalePendingAmount(s, selectedFutureMonth), 0)} icon={ArrowUpRight} iconColor="text-teal-500" smaller />
+              <StatBox label="A Pagar (Compras)" value={filteredPurchases.reduce((acc, p) => acc + getPurchasePendingAmount(p, selectedFutureMonth), 0)} icon={Minus} iconColor="text-rose-500" smaller />
             </div>
 
             <div className="bg-white border border-gray-100 rounded-2xl overflow-hidden shadow-sm">
@@ -749,20 +1055,24 @@ export default function Finances() {
                 <span className="text-[10px] font-black text-teal-600 bg-teal-50 px-2 py-1 rounded-lg uppercase tracking-widest">Vendas</span>
               </div>
               <div className="divide-y divide-gray-50 max-h-[300px] overflow-y-auto">
-                {pendingSales.map((s) => (
-                  <div key={s.id} className="p-4 flex items-center justify-between hover:bg-slate-50 transition-colors">
-                    <div>
-                      <p className="text-sm font-bold text-slate-800">{s.customerName || 'Cliente Direto'}</p>
-                      <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-0.5">
-                        VENDA #{s.id.slice(-4)} · {format(new Date(s.timestamp), "dd/MM")}
+                {filteredSales.map((s) => {
+                  const amt = getSalePendingAmount(s, selectedFutureMonth);
+                  if (amt === 0) return null;
+                  return (
+                    <div key={s.id} className="p-4 flex items-center justify-between hover:bg-slate-50 transition-colors">
+                      <div>
+                        <p className="text-sm font-bold text-slate-800">{s.customerName || 'Cliente Direto'}</p>
+                        <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-0.5">
+                          VENDA #{s.id.slice(-4)} · {format(new Date(s.timestamp), "dd/MM", { timeZone: 'America/Sao_Paulo' })}
+                        </p>
+                      </div>
+                      <p className="text-sm font-black text-teal-600">
+                        + {formatCurrency(amt)}
                       </p>
                     </div>
-                    <p className="text-sm font-black text-teal-600">
-                      + {formatCurrency((s.paymentStatus === 'pending' ? (s.splitAmount1 || s.total) : 0) + (s.paymentStatus2 === 'pending' ? (s.splitAmount2 || 0) : 0))}
-                    </p>
-                  </div>
-                ))}
-                {pendingSales.length === 0 && (
+                  );
+                })}
+                {filteredSales.length === 0 && (
                   <div className="p-8 text-center text-slate-300">
                     <p className="text-[10px] font-black uppercase tracking-widest">Sem vendas pendentes</p>
                   </div>
@@ -776,20 +1086,24 @@ export default function Finances() {
                 <span className="text-[10px] font-black text-rose-600 bg-rose-50 px-2 py-1 rounded-lg uppercase tracking-widest">Compras</span>
               </div>
               <div className="divide-y divide-gray-50 max-h-[300px] overflow-y-auto">
-                {pendingPurchases.map((p) => (
-                  <div key={p.id} className="p-4 flex items-center justify-between hover:bg-slate-50 transition-colors">
-                    <div>
-                      <p className="text-sm font-bold text-slate-800">{p.supplierName || 'Fornecedor'}</p>
-                      <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-0.5">
-                        COMPRA #{p.id.slice(-4)} · {format(new Date(p.timestamp), "dd/MM")}
+                {filteredPurchases.map((p) => {
+                  const amt = getPurchasePendingAmount(p, selectedFutureMonth);
+                  if (amt === 0) return null;
+                  return (
+                    <div key={p.id} className="p-4 flex items-center justify-between hover:bg-slate-50 transition-colors">
+                      <div>
+                        <p className="text-sm font-bold text-slate-800">{p.supplierName || 'Fornecedor'}</p>
+                        <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-0.5">
+                          COMPRA #{p.id.slice(-4)} · {format(new Date(p.timestamp), "dd/MM", { timeZone: 'America/Sao_Paulo' })}
+                        </p>
+                      </div>
+                      <p className="text-sm font-black text-rose-600">
+                        - {formatCurrency(amt)}
                       </p>
                     </div>
-                    <p className="text-sm font-black text-rose-600">
-                      - {formatCurrency((p.paymentStatus === 'pending' ? (p.splitAmount1 || p.total) : 0) + (p.paymentStatus2 === 'pending' ? (p.splitAmount2 || 0) : 0))}
-                    </p>
-                  </div>
-                ))}
-                {pendingPurchases.length === 0 && (
+                  );
+                })}
+                {filteredPurchases.length === 0 && (
                   <div className="p-8 text-center text-slate-300">
                     <p className="text-[10px] font-black uppercase tracking-widest">Sem compras pendentes</p>
                   </div>

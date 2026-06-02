@@ -191,12 +191,21 @@ export default function Products() {
 
       {/* Product Grid */}
       <div className="grid grid-cols-2 xs:grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3 px-2">
-        {filteredProducts.map((product) => (
+        {[...filteredProducts].sort((a, b) => {
+          const aOut = (a.stock ?? 0) <= 0;
+          const bOut = (b.stock ?? 0) <= 0;
+          if (aOut && !bOut) return 1;
+          if (!aOut && bOut) return -1;
+          return 0;
+        }).map((product) => (
           <motion.button
             layoutId={`card-${product.id}`}
             key={product.id}
             onClick={() => setSelectedProduct(product)}
-            className="bg-white dark:bg-slate-900 rounded-2xl p-2 border border-gray-100 dark:border-slate-800 shadow-sm hover:shadow-md transition-all cursor-pointer group flex flex-col aspect-square overflow-hidden"
+            className={cn(
+              "bg-white dark:bg-slate-900 rounded-2xl p-2 border border-gray-100 dark:border-slate-800 shadow-sm hover:shadow-md transition-all cursor-pointer group flex flex-col aspect-square overflow-hidden",
+              product.stock <= 0 && "opacity-50 dark:opacity-40 grayscale-[20%]"
+            )}
           >
             <div className="flex-1 rounded-xl bg-slate-50 dark:bg-slate-800 overflow-hidden relative mb-2">
               {product.images && product.images[0] ? (
@@ -256,7 +265,7 @@ export default function Products() {
                    "text-[8px] font-bold",
                    product.stock <= product.minStock ? "text-danger" : "text-slate-400 dark:text-slate-500"
                  )}>
-                   {product.stock} un
+                   {product.stock <= 0 ? "Esgotado" : `${product.stock} un`}
                  </span>
                </div>
              </div>
@@ -326,8 +335,8 @@ export default function Products() {
                     <DetailItem label="Custo" value={formatCurrency(selectedProduct.costPrice)} icon={DollarSign} />
                     <DetailItem 
                       label="Estoque Atual" 
-                      value={`${selectedProduct.stock} unidades`} 
-                      theme={selectedProduct.stock <= selectedProduct.minStock ? 'danger' : 'default'}
+                      value={selectedProduct.stock <= 0 ? "Esgotado" : `${selectedProduct.stock} unidades`} 
+                      theme={selectedProduct.stock <= 0 ? 'danger' : selectedProduct.stock <= selectedProduct.minStock ? 'danger' : 'default'}
                       icon={Boxes}
                     />
                     <DetailItem label="Estoque Mínimo" value={`${selectedProduct.minStock} un`} icon={AlertCircle} />

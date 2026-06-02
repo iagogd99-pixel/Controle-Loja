@@ -41,8 +41,8 @@ import {
   where
 } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '@/src/lib/firebase';
-import { Sale } from '@/src/types';
-import { formatCurrency, formatDate, cn } from '@/src/lib/utils';
+import { Sale, Product, SaleItem } from '@/src/types';
+import { formatCurrency, formatDate, cn, sanitizeForFirestore } from '@/src/lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
 import { useAuth } from '@/src/contexts/AuthContext';
 
@@ -64,8 +64,23 @@ export default function SalesHistory() {
     customerName: '',
     paymentMethod: '' as any,
     paymentStatus: '' as any,
-    total: 0
+    total: 0,
+    items: [] as SaleItem[]
   });
+
+  const [dbProducts, setDbProducts] = useState<Product[]>([]);
+  const [selectedProdForAdd, setSelectedProdForAddState] = useState<Product | null>(null);
+  const [selectedSizeForAdd, setSelectedSizeForAdd] = useState<string>('');
+  const [addQty, setAddQty] = useState<number>(1);
+  const [addPrice, setAddPrice] = useState<number>(0);
+  const [prodSearch, setProdSearch] = useState<string>('');
+
+  const setSelectedProdForAdd = (prod: Product | null) => {
+    setSelectedProdForAddState(prod);
+    if (prod) {
+      setAddPrice(prod.salePrice || 0);
+    }
+  };
 
   const handleStartEdit = (sale: Sale) => {
     const action = () => {
@@ -75,7 +90,8 @@ export default function SalesHistory() {
         customerName: sale.customerName || '',
         paymentMethod: sale.paymentMethod,
         paymentStatus: sale.paymentStatus,
-        total: sale.total
+        total: sale.total,
+        items: JSON.parse(JSON.stringify(sale.items || []))
       });
     };
 
@@ -105,16 +121,46 @@ export default function SalesHistory() {
     if (!editingSale) return;
     try {
       setLoading(true);
+
+      // 1. Revert original items' stock levels
+      for (const item of (editingSale.items || [])) {
+        if (!item.productId) continue;
+        const productRef = doc(db, 'products', item.productId);
+        const updateData: any = {
+          stock: increment(item.quantity)
+        };
+        if (item.size) {
+          updateData[`sizeStock.${item.size}`] = increment(item.quantity);
+        }
+        await updateDoc(productRef, updateData);
+      }
+
+      // 2. Deduct new items' stock levels
+      for (const item of (editForm.items || [])) {
+        if (!item.productId) continue;
+        const productRef = doc(db, 'products', item.productId);
+        const updateData: any = {
+          stock: increment(-item.quantity)
+        };
+        if (item.size) {
+          updateData[`sizeStock.${item.size}`] = increment(-item.quantity);
+        }
+        await updateDoc(productRef, updateData);
+      }
+
       const saleRef = doc(db, 'sales', editingSale.id);
+      const newSubtotal = (editForm.items || []).reduce((acc, i) => acc + i.total, 0);
       const updateData = {
         timestamp: new Date(editForm.timestamp).toISOString(),
         customerName: editForm.customerName,
         paymentMethod: editForm.paymentMethod,
         paymentStatus: editForm.paymentStatus,
-        total: editForm.total
+        total: editForm.total,
+        subtotal: newSubtotal,
+        items: editForm.items
       };
 
-      await updateDoc(saleRef, updateData);
+      await updateDoc(saleRef, sanitizeForFirestore(updateData));
 
       // Update linked cash movements
       const cashMovementsSnap = await getDocs(query(collection(db, 'cash_movements'), where('saleId', '==', editingSale.id)));
@@ -148,12 +194,21 @@ export default function SalesHistory() {
   });
 
   useEffect(() => {
-    const q = query(collection(db, 'sales'), orderBy('timestamp', 'desc'));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
+    const qS = query(collection(db, 'sales'), orderBy('timestamp', 'desc'));
+    const unsubscribeSales = onSnapshot(qS, (snapshot) => {
       setSales(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Sale)));
       setLoading(false);
     });
-    return () => unsubscribe();
+
+    const qP = query(collection(db, 'products'));
+    const unsubscribeProducts = onSnapshot(qP, (snapshot) => {
+      setDbProducts(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Product)));
+    });
+
+    return () => {
+      unsubscribeSales();
+      unsubscribeProducts();
+    };
   }, []);
 
   const handleDelete = async (sale: Sale, e?: React.MouseEvent) => {
@@ -273,6 +328,10 @@ export default function SalesHistory() {
   };
 
   const filteredSales = sales.filter(s => {
+    // Esconder vendas pendentes do histórico de recebidas
+    if (s.paymentStatus === 'pending' || s.paymentStatus2 === 'pending') {
+      return false;
+    }
     const saleDate = new Date(s.timestamp);
     const matchesSearch = s.id.toLowerCase().includes(searchTerm.toLowerCase()) ||
       (s.customerName || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -313,6 +372,37 @@ export default function SalesHistory() {
       productName: ''
     });
     setSearchTerm('');
+  };
+
+  const getParsedDate = (ts: any): Date => {
+    if (!ts) return new Date();
+    if (typeof ts.toDate === 'function') return ts.toDate();
+    return new Date(ts);
+  };
+
+  const groupSalesByDate = (salesList: Sale[]) => {
+    const groups: { [key: string]: Sale[] } = {};
+    salesList.forEach(sale => {
+      const dateObj = getParsedDate(sale.timestamp);
+      const dateKey = dateObj.toLocaleDateString('pt-BR');
+      if (!groups[dateKey]) {
+        groups[dateKey] = [];
+      }
+      groups[dateKey].push(sale);
+    });
+    
+    return Object.keys(groups)
+      .sort((a, b) => {
+        const [dayA, monthA, yearA] = a.split('/').map(Number);
+        const [dayB, monthB, yearB] = b.split('/').map(Number);
+        const dateA = new Date(yearA, monthA - 1, dayA);
+        const dateB = new Date(yearB, monthB - 1, dayB);
+        return dateB.getTime() - dateA.getTime();
+      })
+      .map(dateKey => ({
+        dateKey,
+        items: groups[dateKey]
+      }));
   };
 
   return (
@@ -436,71 +526,85 @@ export default function SalesHistory() {
         />
       </div>
 
-      <div className="grid grid-cols-2 xs:grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3 px-2">
-        {filteredSales.map((sale) => {
-          const date = new Date(sale.timestamp);
-          return (
-            <motion.div
-              key={sale.id}
-              layoutId={`sale-${sale.id}`}
-              onClick={() => setSelectedSale(sale)}
-              className="bg-white p-3 rounded-2xl border border-gray-100 shadow-sm hover:shadow-md transition-all text-left flex flex-col group relative cursor-pointer"
-            >
-              <div className="flex items-center justify-between mb-2">
-                <div className="p-2 bg-slate-50 rounded-xl group-hover:bg-accent/10 transition-colors">
-                  <Clock className="w-4 h-4 text-slate-400 group-hover:text-accent" />
-                </div>
-                <div className="flex items-center gap-1">
-                  <div className={cn(
-                    "px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-tighter",
-                    sale.paymentStatus === 'pending' ? "bg-danger/10 text-danger" : "bg-success/10 text-success"
-                  )}>
-                    {sale.paymentStatus === 'pending' ? 'A Receber' : 'Recebido'}
-                  </div>
-                  <button
-                    type="button"
-                    onMouseDown={(e) => e.stopPropagation()}
-                    onClick={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      handleDelete(sale, e);
-                    }}
-                    className="w-10 h-10 flex items-center justify-center text-slate-400 hover:text-danger hover:bg-danger/10 rounded-lg transition-all"
+      <div className="space-y-8 px-2">
+        {groupSalesByDate(filteredSales).map(({ dateKey, items }) => (
+          <div key={dateKey} className="space-y-3 break-before-page print:break-before-page">
+            <div className="flex items-center gap-4 my-2">
+              <span className="text-[10px] font-black text-slate-400 bg-slate-50 px-3 py-1 rounded-full uppercase tracking-widest border border-slate-100 flex items-center gap-1.5 shadow-sm">
+                <Calendar className="w-3.5 h-3.5 text-slate-400" />
+                {dateKey}
+              </span>
+              <div className="h-px bg-slate-100 flex-1" />
+            </div>
+            
+            <div className="grid grid-cols-2 xs:grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
+              {items.map((sale) => {
+                const date = getParsedDate(sale.timestamp);
+                return (
+                  <motion.div
+                    key={sale.id}
+                    layoutId={`sale-${sale.id}`}
+                    onClick={() => setSelectedSale(sale)}
+                    className="bg-white p-3 rounded-2xl border border-gray-100 shadow-sm hover:shadow-md transition-all text-left flex flex-col group relative cursor-pointer"
                   >
-                    <Trash2 className="w-5 h-5" />
-                  </button>
-                </div>
-              </div>
-              
-              <div className="mt-auto">
-                <p className="text-[10px] font-black text-slate-800 leading-tight uppercase tracking-tight">
-                  {date.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })}
-                </p>
-                <p className="text-[14px] font-black text-slate-900 mt-0.5">
-                  {date.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
-                </p>
-                <div className="flex items-center justify-between mt-2 pt-2 border-t border-slate-50">
-                  <span className="text-[10px] font-black text-accent">
-                    {formatCurrency(
-                      (sale.paymentStatus === 'paid' ? (sale.splitAmount1 || sale.total) : 0) + 
-                      (sale.paymentStatus2 === 'paid' ? (sale.splitAmount2 || 0) : 0)
-                    )}
-                  </span>
-                  <span className="text-[8px] font-bold text-slate-400 uppercase">
-                    {sale.isSplitPayment ? (
-                      <>
-                        {sale.paymentStatus === 'paid' && sale.paymentMethod}
-                        {sale.paymentStatus === 'paid' && sale.paymentStatus2 === 'paid' && ' + '}
-                        {sale.paymentStatus2 === 'paid' && sale.paymentMethod2}
-                        {(sale.paymentStatus === 'pending' && sale.paymentStatus2 === 'pending') && 'Pendente'}
-                      </>
-                    ) : (sale.paymentStatus === 'paid' ? sale.paymentMethod : 'Pendente')}
-                  </span>
-                </div>
-              </div>
-            </motion.div>
-          );
-        })}
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="p-2 bg-slate-50 rounded-xl group-hover:bg-accent/10 transition-colors flex-shrink-0">
+                        <Clock className="w-4 h-4 text-slate-400 group-hover:text-accent" />
+                      </div>
+                      <div className="flex items-center gap-1 min-w-0">
+                        <div className={cn(
+                          "px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-tighter truncate",
+                          sale.paymentStatus === 'pending' ? "bg-danger/10 text-danger" : "bg-success/10 text-success"
+                        )}>
+                          {sale.paymentStatus === 'pending' ? 'A Receber' : 'Recebido'}
+                        </div>
+                        <button
+                          type="button"
+                          onMouseDown={(e) => e.stopPropagation()}
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            handleDelete(sale, e);
+                          }}
+                          className="w-10 h-10 flex items-center justify-center text-slate-400 hover:text-danger hover:bg-danger/10 rounded-lg transition-all flex-shrink-0"
+                        >
+                          <Trash2 className="w-5 h-5" />
+                        </button>
+                      </div>
+                    </div>
+                    
+                    <div className="mt-auto">
+                      <p className="text-[10px] font-black text-slate-800 leading-tight uppercase tracking-tight">
+                        {date.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })}
+                      </p>
+                      <p className="text-[14px] font-black text-slate-900 mt-0.5">
+                        {date.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+                      </p>
+                      <div className="flex items-center justify-between mt-2 pt-2 border-t border-slate-50">
+                        <span className="text-[10px] font-black text-accent">
+                          {formatCurrency(
+                            (sale.paymentStatus === 'paid' ? (sale.splitAmount1 || sale.total) : 0) + 
+                            (sale.paymentStatus2 === 'paid' ? (sale.splitAmount2 || 0) : 0)
+                          )}
+                        </span>
+                        <span className="text-[8px] font-bold text-slate-400 uppercase truncate">
+                          {sale.isSplitPayment ? (
+                            <>
+                              {sale.paymentStatus === 'paid' && sale.paymentMethod}
+                              {sale.paymentStatus === 'paid' && sale.paymentStatus2 === 'paid' && ' + '}
+                              {sale.paymentStatus2 === 'paid' && sale.paymentMethod2}
+                              {(sale.paymentStatus === 'pending' && sale.paymentStatus2 === 'pending') && 'Pendente'}
+                            </>
+                          ) : (sale.paymentStatus === 'paid' ? sale.paymentMethod : 'Pendente')}
+                        </span>
+                      </div>
+                    </div>
+                  </motion.div>
+                );
+              })}
+            </div>
+          </div>
+        ))}
       </div>
 
       {filteredSales.length === 0 && !loading && (
@@ -664,8 +768,220 @@ export default function SalesHistory() {
                         step="0.01"
                         value={editForm.total}
                         onChange={(e) => setEditForm({...editForm, total: Number(e.target.value)})}
-                        className="w-full bg-slate-50 border-none rounded-2xl px-4 py-3 text-xs font-bold outline-none focus:ring-2 focus:ring-primary/10 text-accent"
+                        className="w-full bg-slate-50 border-none rounded-2xl px-4 py-3 text-xs font-bold outline-none focus:ring-2 focus:ring-primary/10 text-accent font-sans"
                       />
+                    </div>
+
+                    {/* Items Edition Section */}
+                    <div className="space-y-2 mt-4 pt-4 border-t border-slate-100">
+                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1 mb-2">
+                        Itens da Venda ({editForm.items.reduce((acc, i) => acc + i.quantity, 0)})
+                      </p>
+                      
+                      <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
+                        {editForm.items.map((item, idx) => (
+                          <div key={idx} className="flex items-center justify-between p-2.5 bg-slate-50 rounded-xl border border-slate-100">
+                            <div className="min-w-0 flex-1 mr-2 text-left">
+                              <p className="font-bold text-slate-800 text-[11px] leading-tight uppercase truncate">
+                                {item.name} {item.size ? `(${item.size})` : ''}
+                              </p>
+                              <p className="text-[9px] text-slate-400 font-bold mt-0.5">
+                                {formatCurrency(item.price)}/un
+                              </p>
+                            </div>
+                            
+                            <div className="flex items-center gap-2">
+                              {/* Quantity inputs/buttons */}
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const newItems = [...editForm.items];
+                                  if (newItems[idx].quantity > 1) {
+                                    newItems[idx].quantity -= 1;
+                                    newItems[idx].total = newItems[idx].quantity * newItems[idx].price;
+                                    const newTotal = newItems.reduce((acc, i) => acc + i.total, 0);
+                                    setEditForm({ ...editForm, items: newItems, total: newTotal });
+                                  }
+                                }}
+                                className="w-6 h-6 flex items-center justify-center bg-white border border-slate-200 rounded-lg text-slate-600 hover:bg-slate-150 text-xs font-bold"
+                              >
+                                -
+                              </button>
+                              <span className="text-xs font-bold text-slate-800 w-4 text-center font-sans">
+                                {item.quantity}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const newItems = [...editForm.items];
+                                  newItems[idx].quantity += 1;
+                                  newItems[idx].total = newItems[idx].quantity * newItems[idx].price;
+                                  const newTotal = newItems.reduce((acc, i) => acc + i.total, 0);
+                                  setEditForm({ ...editForm, items: newItems, total: newTotal });
+                                }}
+                                className="w-6 h-6 flex items-center justify-center bg-white border border-slate-200 rounded-lg text-slate-600 hover:bg-slate-150 text-xs font-bold"
+                              >
+                                +
+                              </button>
+                              
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const newItems = editForm.items.filter((_, i) => i !== idx);
+                                  const newTotal = newItems.reduce((acc, i) => acc + i.total, 0);
+                                  setEditForm({ ...editForm, items: newItems, total: newTotal });
+                                }}
+                                className="p-1 px-1.5 text-danger hover:bg-danger/10 rounded-lg transition-colors text-[10px] font-bold uppercase"
+                              >
+                                Excluir
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                        {editForm.items.length === 0 && (
+                          <p className="text-[10px] font-bold text-slate-400 italic text-center py-2">
+                            Nenhum item na venda. Adicione produtos abaixo.
+                          </p>
+                        )}
+                      </div>
+
+                      {/* Add Product Sub-interface */}
+                      <div className="p-3 bg-slate-50 rounded-2xl border border-slate-100 space-y-3 mt-3">
+                        <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest leading-none text-left">
+                          Adicionar Novo Produto
+                        </p>
+                        <div className="space-y-2 relative text-left">
+                          <input 
+                            type="text"
+                            placeholder="Buscar produto..."
+                            value={prodSearch}
+                            onChange={(e) => setProdSearch(e.target.value)}
+                            className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:ring-1 focus:ring-primary/20"
+                          />
+                          {prodSearch.trim() !== '' && (
+                            <div className="absolute left-0 right-0 z-30 bg-white border border-slate-150 rounded-xl max-h-40 overflow-y-auto divide-y divide-slate-100 shadow-xl mt-1">
+                              {dbProducts
+                                .filter(p => 
+                                  p.name.toLowerCase().includes(prodSearch.toLowerCase()) || 
+                                  (p.sku && p.sku.toLowerCase().includes(prodSearch.toLowerCase()))
+                                )
+                                .slice(0, 5)
+                                .map(p => (
+                                  <button
+                                    key={p.id}
+                                    type="button"
+                                    onClick={() => {
+                                      setSelectedProdForAdd(p);
+                                      setProdSearch('');
+                                      if (p.sizes && p.sizes.length > 0) {
+                                        setSelectedSizeForAdd(p.sizes[0]);
+                                      } else if (p.sizeStock && Object.keys(p.sizeStock).length > 0) {
+                                        setSelectedSizeForAdd(Object.keys(p.sizeStock)[0]);
+                                      } else {
+                                        setSelectedSizeForAdd('');
+                                      }
+                                    }}
+                                    className="w-full text-left px-3 py-2 text-xs font-bold hover:bg-slate-50 block uppercase text-slate-700"
+                                  >
+                                    {p.name} - {formatCurrency(p.salePrice)}
+                                  </button>
+                                ))
+                              }
+                            </div>
+                          )}
+                        </div>
+
+                        {selectedProdForAdd && (
+                          <div className="bg-white p-3 rounded-xl border border-slate-150 space-y-2">
+                            <div className="flex justify-between items-center text-left">
+                              <span className="text-[11px] font-black text-primary uppercase truncate max-w-[150px]">
+                                {selectedProdForAdd.name}
+                              </span>
+                              <button 
+                                onClick={() => setSelectedProdForAdd(null)}
+                                className="text-slate-400 hover:text-danger"
+                              >
+                                <X className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+
+                            {/* Size selector if product has sizes */}
+                            {((selectedProdForAdd.sizes && selectedProdForAdd.sizes.length > 0) || 
+                              (selectedProdForAdd.sizeStock && Object.keys(selectedProdForAdd.sizeStock || {}).length > 0)) && (
+                              <div className="space-y-1 text-left">
+                                <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Tamanho</label>
+                                <div className="flex flex-wrap gap-1">
+                                  {(selectedProdForAdd.sizes || Object.keys(selectedProdForAdd.sizeStock || {})).map(s => (
+                                    <button
+                                      key={s}
+                                      type="button"
+                                      onClick={() => setSelectedSizeForAdd(s)}
+                                      className={cn(
+                                        "px-2 py-0.5 text-[9px] font-black rounded border uppercase transition-all",
+                                        selectedSizeForAdd === s 
+                                          ? "bg-slate-900 text-white border-slate-900" 
+                                          : "bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100"
+                                      )}
+                                    >
+                                      {s}
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Qty and Price and OK buttons */}
+                            <div className="flex gap-2 items-center text-left">
+                              <div className="flex-1">
+                                <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Preço Un.</label>
+                                <input 
+                                  type="number"
+                                  step="0.01"
+                                  value={addPrice}
+                                  onChange={(e) => setAddPrice(Number(e.target.value))}
+                                  className="w-full bg-slate-50 border-none rounded-xl px-2 py-1 text-xs font-bold outline-none"
+                                />
+                              </div>
+                              <div className="w-16">
+                                <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Qtd</label>
+                                <input 
+                                  type="number"
+                                  min="1"
+                                  value={addQty}
+                                  onChange={(e) => setAddQty(Math.max(1, Number(e.target.value)))}
+                                  className="w-full bg-slate-50 border-none rounded-xl px-2 py-1 text-xs font-bold outline-none text-center font-sans"
+                                />
+                              </div>
+                              <div className="flex items-end h-full pt-4">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const newItem: SaleItem = {
+                                      productId: selectedProdForAdd.id,
+                                      sku: selectedProdForAdd.sku || '',
+                                      size: selectedSizeForAdd || undefined,
+                                      name: selectedProdForAdd.name,
+                                      price: addPrice,
+                                      costPrice: selectedProdForAdd.costPrice || 0,
+                                      quantity: addQty,
+                                      total: addPrice * addQty
+                                    };
+                                    const newItems = [...editForm.items, newItem];
+                                    const newTotal = newItems.reduce((acc, i) => acc + i.total, 0);
+                                    setEditForm({ ...editForm, items: newItems, total: newTotal });
+                                    setSelectedProdForAdd(null);
+                                    setSelectedSizeForAdd('');
+                                    setAddQty(1);
+                                  }}
+                                  className="px-3 py-1.5 bg-success text-white text-[10px] font-black rounded-lg uppercase tracking-wider shadow-sm hover:brightness-105"
+                                >
+                                  ADD
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </div>
                 ) : (

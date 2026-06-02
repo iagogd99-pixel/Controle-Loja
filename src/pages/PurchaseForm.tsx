@@ -82,6 +82,27 @@ export default function PurchaseForm() {
   const [searchParams, setSearchParams] = useSearchParams();
   const { profile } = useAuth();
 
+  const getInitialDraftValue = (field: string, defaultValue: any) => {
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get("edit")) {
+        return defaultValue;
+      }
+      try {
+        const savedDraft = localStorage.getItem("purchase_draft");
+        if (savedDraft) {
+          const draft = JSON.parse(savedDraft);
+          if (draft[field] !== undefined) {
+            return draft[field];
+          }
+        }
+      } catch (e) {
+        console.error("Error reading initial draft value:", e);
+      }
+    }
+    return defaultValue;
+  };
+
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [products, setProducts] = useState<Product[]>([]);
@@ -89,30 +110,30 @@ export default function PurchaseForm() {
   const [searchTerm, setSearchTerm] = useState("");
 
   // Cart
-  const [cart, setCart] = useState<PurchaseItem[]>([]);
-  const [selectedSupplierId, setSelectedSupplierId] = useState("");
-  const [selectedSupplierName, setSelectedSupplierName] = useState("");
-  const [note, setNote] = useState("");
-  const [discount, setDiscount] = useState(0);
-  const [discount2, setDiscount2] = useState(0);
-  const [fee, setFee] = useState(0);
-  const [freight, setFreight] = useState(0);
-  const [interest, setInterest] = useState(0);
-  const [interest2, setInterest2] = useState(0);
-  const [paymentMethod, setPaymentMethod] = useState("dinheiro");
-  const [isSplitPayment, setIsSplitPayment] = useState(false);
-  const [paymentMethod2, setPaymentMethod2] = useState("pix");
-  const [splitAmount1, setSplitAmount1] = useState(0);
-  const [paymentStatus, setPaymentStatus] = useState<"paid" | "pending">(
-    "paid",
+  const [cart, setCart] = useState<PurchaseItem[]>(() => getInitialDraftValue("cart", []));
+  const [selectedSupplierId, setSelectedSupplierId] = useState<string>(() => getInitialDraftValue("selectedSupplierId", ""));
+  const [selectedSupplierName, setSelectedSupplierName] = useState<string>(() => getInitialDraftValue("selectedSupplierName", ""));
+  const [note, setNote] = useState<string>(() => getInitialDraftValue("note", ""));
+  const [discount, setDiscount] = useState<number>(() => getInitialDraftValue("discount", 0));
+  const [discount2, setDiscount2] = useState<number>(() => getInitialDraftValue("discount2", 0));
+  const [fee, setFee] = useState<number>(() => getInitialDraftValue("fee", 0));
+  const [freight, setFreight] = useState<number>(() => getInitialDraftValue("freight", 0));
+  const [interest, setInterest] = useState<number>(() => getInitialDraftValue("interest", 0));
+  const [interest2, setInterest2] = useState<number>(() => getInitialDraftValue("interest2", 0));
+  const [paymentMethod, setPaymentMethod] = useState<string>(() => getInitialDraftValue("paymentMethod", "dinheiro"));
+  const [isSplitPayment, setIsSplitPayment] = useState<boolean>(() => getInitialDraftValue("isSplitPayment", false));
+  const [paymentMethod2, setPaymentMethod2] = useState<string>(() => getInitialDraftValue("paymentMethod2", "pix"));
+  const [splitAmount1, setSplitAmount1] = useState<number>(() => getInitialDraftValue("splitAmount1", 0));
+  const [paymentStatus, setPaymentStatus] = useState<"paid" | "pending">(() =>
+    getInitialDraftValue("paymentStatus", "paid"),
   );
-  const [paymentStatus2, setPaymentStatus2] = useState<"paid" | "pending">(
-    "paid",
+  const [paymentStatus2, setPaymentStatus2] = useState<"paid" | "pending">(() =>
+    getInitialDraftValue("paymentStatus2", "paid"),
   );
-  const [installments, setInstallments] = useState(1);
-  const [installments2, setInstallments2] = useState(1);
-  const [purchaseDate, setPurchaseDate] = useState(
-    getBrasiliaTime().toISOString().slice(0, 16),
+  const [installments, setInstallments] = useState<number>(() => getInitialDraftValue("installments", 1));
+  const [installments2, setInstallments2] = useState<number>(() => getInitialDraftValue("installments2", 1));
+  const [purchaseDate, setPurchaseDate] = useState<string>(() =>
+    getInitialDraftValue("purchaseDate", getBrasiliaTime().toISOString().slice(0, 16)),
   );
   const [editingId, setEditingId] = useState<string | null>(null);
   const [originalPurchase, setOriginalPurchase] = useState<any>(null);
@@ -205,6 +226,56 @@ export default function PurchaseForm() {
 
     return () => unsubscribe();
   }, [searchParams]);
+
+  // Save draft whenever state changes (if not in edit mode)
+  useEffect(() => {
+    const editId = searchParams.get("edit");
+    if (!editId) {
+      const draft = {
+        cart,
+        selectedSupplierId,
+        selectedSupplierName,
+        note,
+        discount,
+        discount2,
+        fee,
+        freight,
+        interest,
+        interest2,
+        paymentMethod,
+        isSplitPayment,
+        paymentMethod2,
+        splitAmount1,
+        paymentStatus,
+        paymentStatus2,
+        installments,
+        installments2,
+        purchaseDate,
+      };
+      localStorage.setItem("purchase_draft", JSON.stringify(draft));
+    }
+  }, [
+    cart,
+    selectedSupplierId,
+    selectedSupplierName,
+    note,
+    discount,
+    discount2,
+    fee,
+    freight,
+    interest,
+    interest2,
+    paymentMethod,
+    isSplitPayment,
+    paymentMethod2,
+    splitAmount1,
+    paymentStatus,
+    paymentStatus2,
+    installments,
+    installments2,
+    purchaseDate,
+    searchParams,
+  ]);
 
   const addToCart = React.useCallback(
     (product: Product, size?: string, quantity: number = 1, price?: number) => {
@@ -526,6 +597,7 @@ export default function PurchaseForm() {
         }
       });
 
+      localStorage.removeItem("purchase_draft");
       navigate("/compras");
     } catch (error) {
       console.error(error);
@@ -557,8 +629,13 @@ export default function PurchaseForm() {
             <ArrowLeft className="w-5 h-5" />
           </button>
           <div>
-            <h1 className="text-2xl font-black text-primary tracking-tight leading-none">
+            <h1 className="text-2xl font-black text-primary tracking-tight leading-none flex items-center gap-2">
               {editingId ? "Editar Compra" : "Nova Compra"}
+              {!editingId && (cart.length > 0 || selectedSupplierId) && (
+                <span className="text-[8px] bg-emerald-500/10 border border-emerald-500/20 text-emerald-500 px-1.5 py-0.5 rounded-full font-black uppercase tracking-wider animate-pulse">
+                  Rascunho
+                </span>
+              )}
             </h1>
             <p className="text-[10px] text-slate-500 font-bold tracking-widest uppercase mt-1">
               {editingId
@@ -609,10 +686,19 @@ export default function PurchaseForm() {
               </div>
               <div className="overflow-y-auto flex-1 p-2 space-y-1">
                 {filteredProducts.length > 0 ? (
-                  filteredProducts.map((product) => (
+                  [...filteredProducts].sort((a, b) => {
+                    const aOut = (a.stock ?? 0) <= 0;
+                    const bOut = (b.stock ?? 0) <= 0;
+                    if (aOut && !bOut) return 1;
+                    if (!aOut && bOut) return -1;
+                    return 0;
+                  }).map((product) => (
                     <div
                       key={product.id}
-                      className="flex items-center gap-4 p-3 rounded-2xl transition-all group hover:bg-slate-50"
+                      className={cn(
+                        "flex items-center gap-4 p-3 rounded-2xl transition-all group hover:bg-slate-50",
+                        product.stock <= 0 && "opacity-50 grayscale"
+                      )}
                     >
                       <div className="w-12 h-12 rounded-xl bg-slate-100 overflow-hidden flex-shrink-0 flex items-center justify-center">
                         {product.images?.[0] ? (
@@ -646,7 +732,7 @@ export default function PurchaseForm() {
                             SKU: {product.sku}
                           </span>
                           <span className="text-[10px] font-bold text-slate-400">
-                            Estoque: {product.stock}
+                            Estoque: {product.stock <= 0 ? "Esgotado" : product.stock}
                           </span>
                         </div>
                       </div>
@@ -718,9 +804,43 @@ export default function PurchaseForm() {
             <h3 className="text-lg font-bold text-primary flex items-center gap-2">
               <ShoppingCart className="w-5 h-5" /> Itens da Nota
             </h3>
-            <span className="bg-accent/10 text-accent text-[10px] font-black px-3 py-1 rounded-full uppercase tracking-widest">
-              {cart.length} itens
-            </span>
+            <div className="flex items-center gap-2">
+              {!editingId && (cart.length > 0 || selectedSupplierId || note) && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (confirm("Deseja realmente limpar este rascunho de compra?")) {
+                      localStorage.removeItem("purchase_draft");
+                      setCart([]);
+                      setSelectedSupplierId("");
+                      setSelectedSupplierName("");
+                      setNote("");
+                      setDiscount(0);
+                      setDiscount2(0);
+                      setFee(0);
+                      setFreight(0);
+                      setInterest(0);
+                      setInterest2(0);
+                      setPaymentMethod("dinheiro");
+                      setIsSplitPayment(false);
+                      setPaymentMethod2("pix");
+                      setSplitAmount1(0);
+                      setPaymentStatus("paid");
+                      setPaymentStatus2("paid");
+                      setInstallments(1);
+                      setInstallments2(1);
+                      setPurchaseDate(getBrasiliaTime().toISOString().slice(0, 16));
+                    }
+                  }}
+                  className="text-[10px] font-bold text-rose-500 hover:text-rose-600 bg-rose-50 hover:bg-rose-100 px-3 py-1 rounded-full transition-all cursor-pointer"
+                >
+                  Limpar Rascunho
+                </button>
+              )}
+              <span className="bg-accent/10 text-accent text-[10px] font-black px-3 py-1 rounded-full uppercase tracking-widest">
+                {cart.length} itens
+              </span>
+            </div>
           </div>
         </div>
 

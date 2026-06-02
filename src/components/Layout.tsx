@@ -21,12 +21,32 @@ import {
   ChevronUp,
   Plus,
   FileText,
-  History
+  History,
+  AlertCircle,
+  Wallet,
+  CheckCircle2,
+  Loader2
 } from 'lucide-react';
+import { 
+  collection, 
+  query, 
+  where, 
+  onSnapshot, 
+  limit, 
+  addDoc, 
+  updateDoc, 
+  doc, 
+  serverTimestamp,
+  Timestamp,
+  orderBy 
+} from 'firebase/firestore';
+import { db } from '@/src/lib/firebase';
 import { useAuth } from '@/src/contexts/AuthContext';
 import { auth } from '@/src/lib/firebase';
-import { cn } from '@/src/lib/utils';
+import { cn, getBrasiliaTime, formatCurrency } from '@/src/lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
+import { toZonedTime, format } from 'date-fns-tz';
+import { ptBR } from 'date-fns/locale';
 
 interface MenuItem {
   path?: string;
@@ -91,6 +111,209 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
   const [openSubmenus, setOpenSubmenus] = React.useState<string[]>([]);
   const profileMenuRef = React.useRef<HTMLDivElement>(null);
 
+  interface LocalCashSession {
+    id: string;
+    openingBalance: number;
+    closingBalance?: number;
+    status: 'open' | 'closed';
+    userId: string;
+    userName: string;
+    openedAt: any;
+    closedAt?: any;
+  }
+
+  interface LocalMovement {
+    id: string;
+    amount: number;
+    type: 'in' | 'out';
+    category?: 'venda' | 'sangria' | 'suprimento' | 'compra' | 'outros';
+    paymentMethod?: string;
+    reason: string;
+    userId: string;
+    userName: string;
+    saleId?: string;
+    installmentId?: number;
+    timestamp: any;
+  }
+
+  const [activeSession, setActiveSession] = React.useState<LocalCashSession | null>(null);
+  const [movements, setMovements] = React.useState<LocalMovement[]>([]);
+  const [cashLoading, setCashLoading] = React.useState(true);
+  const [cashSubmitting, setCashSubmitting] = React.useState(false);
+  const [openingAmount, setOpeningAmount] = React.useState('');
+  const [autoClosingAmountReal, setAutoClosingAmountReal] = React.useState('');
+  const [autoClosingNote, setAutoClosingNote] = React.useState('');
+
+  // Watch open cash sessions
+  React.useEffect(() => {
+    if (!profile) {
+      setCashLoading(false);
+      return;
+    }
+    const qSession = query(
+      collection(db, 'cash_sessions'),
+      where('status', '==', 'open'),
+      limit(1)
+    );
+
+    const unsubSession = onSnapshot(qSession, (snapshot) => {
+      if (!snapshot.empty) {
+        const doc_ = snapshot.docs[0];
+        setActiveSession({ id: doc_.id, ...doc_.data() } as LocalCashSession);
+      } else {
+        setActiveSession(null);
+      }
+      setCashLoading(false);
+    }, (error) => {
+      console.error("Error loading cash session in Layout:", error);
+      setCashLoading(false);
+    });
+
+    return () => {
+      unsubSession();
+    };
+  }, [profile]);
+
+  // Check if session has expired (needs closure)
+  const expired = React.useMemo(() => {
+    if (!activeSession || activeSession.status !== 'open') return false;
+    if (!activeSession.openedAt) return false;
+    try {
+      const openedAtDate = activeSession.openedAt instanceof Timestamp 
+        ? activeSession.openedAt.toDate() 
+        : new Date(activeSession.openedAt);
+      
+      const openedAtZoned = toZonedTime(openedAtDate, 'America/Sao_Paulo');
+      const currentZoned = getBrasiliaTime();
+      
+      // Deadline: 23:59:00 on the day of opening (America/Sao_Paulo)
+      const openedDay2359 = new Date(openedAtZoned);
+      openedDay2359.setHours(23, 59, 0, 0);
+      
+      return currentZoned.getTime() >= openedDay2359.getTime();
+    } catch (e) {
+      console.error(e);
+      return false;
+    }
+  }, [activeSession]);
+
+  // Watch movements of the active session
+  React.useEffect(() => {
+    if (!activeSession) {
+      setMovements([]);
+      return;
+    }
+
+    const sessStartStr = (activeSession.openedAt instanceof Timestamp ? activeSession.openedAt.toDate() : getBrasiliaTime()).toISOString();
+    
+    const qMovements = query(
+      collection(db, 'cash_movements'),
+      where('timestamp', '>=', sessStartStr),
+      orderBy('timestamp', 'desc')
+    );
+
+    const unsubMovements = onSnapshot(qMovements, (snapshot) => {
+      const docs = snapshot.docs.map(doc_ => ({
+        id: doc_.id,
+        ...doc_.data()
+      })) as LocalMovement[];
+
+      const isExcludedCardPurchase = (m: LocalMovement) => {
+        if (m.type === 'out' && m.category === 'compra') {
+          const pm = (m.paymentMethod || '').toLowerCase();
+          const isCard = pm.includes('cartão') || pm.includes('cartao') || pm.includes('crédito') || pm.includes('credito') || pm.includes('débito') || pm.includes('debito') || pm.includes('card');
+          if (isCard) {
+            const isInstallmentOrQuitacao = m.installmentId !== undefined || 
+                                            (m.reason || '').toLowerCase().includes('parcela') || 
+                                            (m.reason || '').toLowerCase().includes('quitação') || 
+                                            (m.reason || '').toLowerCase().includes('quitando') ||
+                                            (m.reason || '').toLowerCase().includes('pgto parcela') ||
+                                            (m.reason || '').toLowerCase().includes('vencimento');
+            return !isInstallmentOrQuitacao;
+          }
+        }
+        return false;
+      };
+
+      const filteredDocs = docs.filter(m => !isExcludedCardPurchase(m));
+      setMovements(filteredDocs);
+    }, (error) => {
+      console.error("Error listing cash movements in Layout:", error);
+    });
+
+    return () => {
+      unsubMovements();
+    };
+  }, [activeSession]);
+
+  const totalInflows = React.useMemo(() => {
+    return movements.filter(m => m.type === 'in').reduce((sum, m) => sum + m.amount, 0);
+  }, [movements]);
+
+  const totalOutflows = React.useMemo(() => {
+    return movements.filter(m => m.type === 'out').reduce((sum, m) => sum + m.amount, 0);
+  }, [movements]);
+
+  const saldoAtual = React.useMemo(() => {
+    return activeSession ? (activeSession.openingBalance + totalInflows - totalOutflows) : 0;
+  }, [activeSession, totalInflows, totalOutflows]);
+
+  React.useEffect(() => {
+    if (expired && activeSession) {
+      setAutoClosingAmountReal(saldoAtual.toFixed(2));
+    }
+  }, [expired, activeSession, saldoAtual]);
+
+  const handleOpenCashLocal = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!profile || cashSubmitting) return;
+
+    try {
+      setCashSubmitting(true);
+      await addDoc(collection(db, 'cash_sessions'), {
+        openingBalance: Number(openingAmount),
+        status: 'open',
+        userId: profile.uid,
+        userName: profile.name,
+        openedAt: serverTimestamp()
+      });
+      setOpeningAmount('');
+    } catch (error) {
+      console.error("Error opening cash session in Layout:", error);
+    } finally {
+      setCashSubmitting(false);
+    }
+  };
+
+  const handleCloseCashLocal = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!activeSession || cashSubmitting) return;
+    
+    const expectedBalance = activeSession.openingBalance + totalInflows - totalOutflows;
+    const realBalance = autoClosingAmountReal !== '' ? Number(autoClosingAmountReal) : expectedBalance;
+    const difference = realBalance - expectedBalance;
+
+    try {
+      setCashSubmitting(true);
+      await updateDoc(doc(db, 'cash_sessions', activeSession.id), {
+        status: 'closed',
+        closingBalance: expectedBalance,
+        closingBalanceReal: realBalance,
+        closingDifference: difference,
+        closingNote: autoClosingNote || "Fechamento automático em 23:59 (GMT-3)",
+        closedAt: serverTimestamp(),
+        closedBy: profile?.uid || 'system',
+        closedByName: profile?.name || 'Sistema'
+      });
+      setAutoClosingAmountReal('');
+      setAutoClosingNote('');
+    } catch (error) {
+      console.error("Error closing cash session in Layout:", error);
+    } finally {
+      setCashSubmitting(false);
+    }
+  };
+
   const toggleSubmenu = (label: string) => {
     setOpenSubmenus(prev => 
       prev.includes(label) ? prev.filter(l => l !== label) : [...prev, label]
@@ -118,6 +341,152 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
     logout();
     navigate('/login');
   };
+
+  const mustCloseCaixa = activeSession && expired;
+  const mustOpenCaixa = !activeSession;
+  const isLocked = !!profile && (mustCloseCaixa || mustOpenCaixa);
+
+  if (cashLoading && profile) {
+    return (
+      <div className="h-screen w-screen flex flex-col items-center justify-center bg-slate-50 dark:bg-slate-950 font-sans">
+        <div className="flex flex-col items-center gap-4">
+          <div className="w-12 h-12 border-4 border-accent border-t-transparent rounded-full animate-spin" />
+          <p className="text-slate-500 font-medium animate-pulse">Sincronizando caixa de hoje...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (isLocked) {
+    return (
+      <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex flex-col justify-center items-center p-4 font-sans antialiased text-slate-800 dark:text-slate-200">
+        <div className="w-full max-w-md bg-white dark:bg-slate-900 p-8 rounded-[24px] border border-slate-100 dark:border-slate-800 shadow-2xl space-y-6">
+          
+          {mustCloseCaixa ? (
+            <motion.div 
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="space-y-6"
+            >
+              <div className="text-center">
+                <div className="w-16 h-16 bg-amber-50 dark:bg-amber-950/30 rounded-full flex items-center justify-center text-amber-500 mx-auto mb-4">
+                  <AlertCircle className="w-8 h-8" />
+                </div>
+                <h2 className="text-xl font-black text-slate-900 dark:text-white uppercase leading-tight">Encerramento de Caixa</h2>
+                <p className="text-slate-500 dark:text-slate-400 text-xs font-bold leading-relaxed mt-2 px-2">
+                  O caixa aberto em <span className="text-slate-700 dark:text-slate-350 font-extrabold">{activeSession && format(activeSession.openedAt instanceof Timestamp ? activeSession.openedAt.toDate() : new Date(activeSession.openedAt), "dd/MM/yyyy 'às' HH:mm", { timeZone: 'America/Sao_Paulo', locale: ptBR })}</span> expirou às 23:59.
+                </p>
+                <p className="text-slate-550 dark:text-slate-400 text-xs font-bold leading-relaxed mt-1 px-2">
+                  Você precisa encerrar o caixa do dia anterior informando o saldo final antes de prosseguir.
+                </p>
+              </div>
+
+              <div className="w-full bg-slate-50 dark:bg-slate-800/50 rounded-2xl p-5 text-left space-y-3 border border-slate-100 dark:border-slate-800">
+                <div className="flex justify-between text-xs font-semibold text-slate-500 dark:text-slate-400">
+                  <span>Saldo Inicial:</span>
+                  <span className="text-slate-700 dark:text-slate-350 font-black">{activeSession && formatCurrency(activeSession.openingBalance)}</span>
+                </div>
+                <div className="flex justify-between text-xs font-semibold text-slate-500 dark:text-slate-400">
+                  <span>Total de Entradas:</span>
+                  <span className="text-teal-600 font-black">+{formatCurrency(totalInflows)}</span>
+                </div>
+                <div className="flex justify-between text-xs font-semibold text-slate-500 dark:text-slate-400">
+                  <span>Total de Saídas:</span>
+                  <span className="text-rose-600 font-black">-{formatCurrency(totalOutflows)}</span>
+                </div>
+                <div className="border-t border-slate-200 dark:border-slate-800 mt-2.5 pt-2.5 flex justify-between text-xs font-black text-slate-800 dark:text-slate-200">
+                  <span>Saldo Esperado:</span>
+                  <span>{formatCurrency(saldoAtual)}</span>
+                </div>
+              </div>
+
+              <form onSubmit={handleCloseCashLocal} className="w-full space-y-4 text-left">
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase ml-2">Valor Real no Caixa (R$)</label>
+                  <input 
+                    type="number"
+                    step="0.01"
+                    required
+                    value={autoClosingAmountReal}
+                    onChange={(e) => setAutoClosingAmountReal(e.target.value)}
+                    placeholder={saldoAtual.toFixed(2)}
+                    className="w-full h-14 bg-slate-50 dark:bg-slate-800 border-2 border-transparent focus:border-amber-500 rounded-xl px-6 font-black text-slate-800 dark:text-white transition-all outline-none"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase ml-2">Observação (Opcional)</label>
+                  <textarea 
+                    rows={2}
+                    value={autoClosingNote}
+                    onChange={(e) => setAutoClosingNote(e.target.value)}
+                    className="w-full bg-slate-50 dark:bg-slate-800 border-2 border-transparent focus:border-slate-200 rounded-xl p-4 font-bold text-slate-600 dark:text-slate-350 transition-all outline-none resize-none text-sm"
+                    placeholder="Observação do encerramento de caixa"
+                  />
+                </div>
+                <button 
+                  type="submit"
+                  disabled={cashSubmitting || !autoClosingAmountReal}
+                  className="w-full h-14 bg-amber-500 hover:bg-amber-600 text-white font-black rounded-xl shadow-xl shadow-amber-500/20 flex items-center justify-center gap-2 disabled:opacity-50 uppercase text-xs transition-all cursor-pointer"
+                >
+                  {cashSubmitting ? <Loader2 className="w-5 h-5 animate-spin" /> : <CheckCircle2 className="w-5 h-5" />}
+                  Confirmar Fechamento e Prosseguir
+                </button>
+              </form>
+            </motion.div>
+          ) : (
+            <motion.div 
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="space-y-6 text-center"
+            >
+              <div className="w-20 h-20 bg-slate-50 dark:bg-slate-800 rounded-2xl flex items-center justify-center text-slate-400 dark:text-slate-500 mx-auto mb-4">
+                <Wallet className="w-10 h-10" />
+              </div>
+              <div>
+                <h2 className="text-xl font-black text-slate-900 dark:text-white uppercase leading-tight">Abertura de Caixa</h2>
+                <p className="text-slate-550 dark:text-slate-400 text-xs font-bold leading-relaxed mt-2 px-4">
+                  O caixa atual encontra-se fechado. Por favor, abra o caixa informando o saldo inicial para começar o dia de trabalho.
+                </p>
+              </div>
+              
+              <form onSubmit={handleOpenCashLocal} className="w-full space-y-4 text-left">
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase ml-2">Saldo Inicial (R$)</label>
+                  <input 
+                    type="number"
+                    step="0.01"
+                    required
+                    value={openingAmount}
+                    onChange={(e) => setOpeningAmount(e.target.value)}
+                    placeholder="Ex: 500,00"
+                    className="w-full h-14 bg-slate-50 dark:bg-slate-800 border-2 border-transparent focus:border-accent rounded-xl px-6 font-black text-slate-800 dark:text-white transition-all outline-none"
+                  />
+                </div>
+                <button 
+                  type="submit"
+                  disabled={cashSubmitting || !openingAmount}
+                  className="w-full h-14 bg-accent text-white font-black rounded-xl shadow-xl shadow-accent/25 hover:translate-y-[-2px] active:translate-y-0 transition-all flex items-center justify-center gap-2 disabled:opacity-50 uppercase text-xs"
+                >
+                  {cashSubmitting ? <Loader2 className="w-5 h-5 animate-spin" /> : <DollarSign className="w-5 h-5" />}
+                  Abrir Caixa e Iniciar
+                </button>
+              </form>
+            </motion.div>
+          )}
+
+          <div className="border-t border-slate-100 dark:border-slate-800 pt-4 flex justify-center">
+            <button
+              onClick={handleLogout}
+              className="flex items-center gap-2 px-4 py-2 bg-slate-100 dark:bg-slate-800 hover:bg-danger/15 hover:text-danger text-slate-600 dark:text-slate-400 rounded-xl transition-all font-black text-xs uppercase cursor-pointer"
+            >
+              <LogOut className="w-4 h-4" />
+              Sair do Sistema
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-slate-50/50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 relative transition-colors duration-300">

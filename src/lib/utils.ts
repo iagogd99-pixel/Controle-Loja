@@ -13,9 +13,7 @@ export function getBrasiliaTime() {
 }
 
 export function getBrasiliaISO() {
-  const now = new Date();
-  const zonedDate = toZonedTime(now, BR_TIMEZONE);
-  return format(zonedDate, "yyyy-MM-dd'T'HH:mm:ss.SSSxxx", { timeZone: BR_TIMEZONE });
+  return format(new Date(), "yyyy-MM-dd'T'HH:mm:ss.SSSxxx", { timeZone: BR_TIMEZONE });
 }
 
 export function formatCurrency(value: number) {
@@ -33,12 +31,37 @@ export function formatDate(date: Date | string) {
     year: 'numeric',
     hour: '2-digit',
     minute: '2-digit',
+    timeZone: BR_TIMEZONE,
   }).format(d);
 }
 
 export function getProductSku(baseSku: string, size?: string) {
   if (!size) return baseSku;
   return `${baseSku}.${size}`;
+}
+
+export function sanitizeForFirestore<T>(obj: T): T {
+  if (obj === undefined) return null as any;
+  if (obj === null) return null as any;
+
+  if (Array.isArray(obj)) {
+    return obj.map(item => sanitizeForFirestore(item)) as any;
+  }
+
+  if (typeof obj === 'object') {
+    const cleaned: any = {};
+    for (const key of Object.keys(obj as any)) {
+      const val = (obj as any)[key];
+      if (val !== undefined) {
+        cleaned[key] = sanitizeForFirestore(val);
+      } else {
+        cleaned[key] = null;
+      }
+    }
+    return cleaned as T;
+  }
+
+  return obj;
 }
 
 export function sortSizes(sizes: string[]) {

@@ -89,6 +89,7 @@ export interface Sale {
   subtotal: number;
   discount: number;
   storeFee: number;
+  storeFee2?: number;
   customerFee: number;
   shipping?: number;
   interest?: number;
