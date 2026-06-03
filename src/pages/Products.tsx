@@ -42,6 +42,7 @@ export default function Products() {
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [flowSummary, setFlowSummary] = useState({ in: 0, out: 0 });
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const [sortBy, setSortBy] = useState<string>('name_asc');
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
 
@@ -187,15 +188,64 @@ export default function Products() {
         >
           {categories.map(cat => <option key={cat} value={cat}>{cat}</option>)}
         </select>
+        <select 
+          value={sortBy}
+          onChange={(e) => setSortBy(e.target.value)}
+          className="bg-white dark:bg-slate-900 border border-gray-100 dark:border-slate-800 px-3 py-2 rounded-xl outline-none transition-all font-bold text-[10px] text-slate-500 dark:text-slate-400 min-w-auto"
+        >
+          <option value="name_asc">Organizar: Nome (A-Z)</option>
+          <option value="name_desc">Organizar: Nome (Z-A)</option>
+          <option value="costPrice_asc">Organizar: Menor Custo</option>
+          <option value="costPrice_desc">Organizar: Maior Custo</option>
+          <option value="salePrice_asc">Organizar: Menor Preço de Venda</option>
+          <option value="salePrice_desc">Organizar: Maior Preço de Venda</option>
+          <option value="sku_asc">Organizar: SKU (A-Z)</option>
+          <option value="sku_desc">Organizar: SKU (Z-A)</option>
+          <option value="stock_desc">Organizar: Maior Estoque</option>
+          <option value="stock_asc">Organizar: Menor Estoque</option>
+        </select>
       </div>
 
       {/* Product Grid */}
       <div className="grid grid-cols-2 xs:grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3 px-2">
         {[...filteredProducts].sort((a, b) => {
+          // Out of stock items go to the bottom by default
           const aOut = (a.stock ?? 0) <= 0;
           const bOut = (b.stock ?? 0) <= 0;
           if (aOut && !bOut) return 1;
           if (!aOut && bOut) return -1;
+
+          // Process chosen sort parameter within their stock availability groups
+          if (sortBy === 'name_asc') {
+            return (a.name || '').localeCompare(b.name || '');
+          }
+          if (sortBy === 'name_desc') {
+            return (b.name || '').localeCompare(a.name || '');
+          }
+          if (sortBy === 'costPrice_asc') {
+            return (a.costPrice ?? 0) - (b.costPrice ?? 0);
+          }
+          if (sortBy === 'costPrice_desc') {
+            return (b.costPrice ?? 0) - (a.costPrice ?? 0);
+          }
+          if (sortBy === 'salePrice_asc') {
+            return (a.salePrice ?? 0) - (b.salePrice ?? 0);
+          }
+          if (sortBy === 'salePrice_desc') {
+            return (b.salePrice ?? 0) - (a.salePrice ?? 0);
+          }
+          if (sortBy === 'sku_asc') {
+            return (a.sku || '').localeCompare(b.sku || '');
+          }
+          if (sortBy === 'sku_desc') {
+            return (b.sku || '').localeCompare(a.sku || '');
+          }
+          if (sortBy === 'stock_desc') {
+            return (b.stock ?? 0) - (a.stock ?? 0);
+          }
+          if (sortBy === 'stock_asc') {
+            return (a.stock ?? 0) - (b.stock ?? 0);
+          }
           return 0;
         }).map((product) => (
           <motion.button
