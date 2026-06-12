@@ -423,10 +423,10 @@ export default function ProductForm() {
                 <div className="space-y-1">
                   <label className="text-[11px] font-bold text-slate-600 uppercase ml-1">Custos Extras (%)</label>
                   <input 
-                    type="number" step="0.001" 
+                    type="number" step="0.0001" 
                     {...register('costOverheadPercent', { valueAsNumber: true })} 
                     className="form-input py-2.5 text-sm bg-slate-50 border-none"
-                    placeholder="0,0"
+                    placeholder="0,0000"
                   />
                   {errors.costOverheadPercent && (
                     <p className="text-[10px] text-danger font-bold pl-1">{errors.costOverheadPercent.message}</p>

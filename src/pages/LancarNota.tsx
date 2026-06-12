@@ -565,7 +565,7 @@ export default function LancarNota() {
                                         <>
                                           <span>•</span>
                                           <span className="text-accent font-extrabold">
-                                            +{percentageOverhead.toFixed(2)}% acrésc.
+                                            +{percentageOverhead.toFixed(4)}% acrésc.
                                           </span>
                                         </>
                                       )}
@@ -647,7 +647,7 @@ export default function LancarNota() {
                                         <>
                                           <span>•</span>
                                           <span className="text-accent font-extrabold">
-                                            +{percentageOverhead.toFixed(2)}% acrésc.
+                                            +{percentageOverhead.toFixed(4)}% acrésc.
                                           </span>
                                         </>
                                       )}
